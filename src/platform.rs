@@ -1,5 +1,8 @@
 use gtk::gdk;
 
+#[cfg(not(target_os = "linux"))]
+use gtk::prelude::GtkWindowExt;
+
 #[cfg(target_os = "linux")]
 pub fn layer_shell_supported() -> bool {
     use glib::prelude::ObjectExt;

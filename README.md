@@ -60,10 +60,11 @@ Wayland first, with Windows kept in the same codebase.
 ## Building
 
 Requires Rust ≥ 1.92, GTK ≥ 4.8 and, on Wayland,
-`gtk4-layer-shell`. For example on Ubuntu:
+`gtk4-layer-shell`. Install the development packages provided by your
+distribution. Ubuntu 24.04 does not package the GTK4 version of layer-shell;
+the CI workflow shows the pinned upstream source-build commands used there.
 
 ```sh
-sudo apt install libgtk-4-dev libgtk4-layer-shell-dev
 cargo build --release
 cargo test
 ./target/release/yeet --hidden

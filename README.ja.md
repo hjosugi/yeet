@@ -14,9 +14,10 @@ GNOME fallback を実装しています。
 ## ビルド
 
 Rust 1.92 以上、GTK 4.8 以上、Wayland では `gtk4-layer-shell` が必要です。
+Ubuntu 24.04 には GTK4 版の package がないため、CI と同じく upstream
+v1.3.0 を source build してください。
 
 ```sh
-sudo apt install libgtk-4-dev libgtk4-layer-shell-dev
 cargo build --release
 cargo test
 ./target/release/yeet --hidden
