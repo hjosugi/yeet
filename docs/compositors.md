@@ -38,12 +38,11 @@ then repeat with two monitors whose scale factors differ.
 
 ## Scripted smoke
 
-The CI smoke test starts the GTK application under Xvfb and proves that the UI
-loads and the process remains alive. It deliberately does not claim to test
-`wl_data_device` or layer-shell. A useful headless compositor job must start a
-real sway/cage session, summon over IPC, assert a mapped surface, and remain
-non-blocking when synthetic DnD is unavailable. Synthetic input tools vary by
-compositor and should not become a flaky release gate.
+CI starts the GTK application under both Xvfb and a headless Weston Wayland
+session and proves that the UI loads and remains alive. Weston does not expose
+layer-shell in this configuration, so this deliberately does not claim to test
+`wl_data_device` or mid-drag layer-shell behavior. Synthetic input tools vary
+by compositor and should not become a flaky release gate.
 
 ## Reporting failures
 

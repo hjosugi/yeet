@@ -1,9 +1,11 @@
 # Windows behavior and verification
 
 Yeet uses GTK/GDK's Windows drag implementation plus native topmost tool-window
-styles from the `windows` crate. The Rust rewrite currently builds this backend;
-tray, autostart and installer validation remain follow-up work. Ctrl+Alt+Y is
-registered as the global shelf toggle when it is available.
+styles from the `windows` crate. Ctrl+Alt+Y is registered as the global shelf
+toggle when it is available; pressing it twice quickly captures the clipboard.
+Per-user autostart uses the standard `HKCU` Run key and is controlled in
+Settings. Installer validation and code signing still require a real Windows
+release machine.
 
 Both the shelf and edge strips set `WS_EX_TOPMOST` and are placed with
 `SetWindowPos(HWND_TOPMOST)`. The shelf reapplies those flags whenever it is

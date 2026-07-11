@@ -77,6 +77,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           choco install innosetup --yes --no-progress
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" packaging/windows/yeet.iss
+          ./packaging/windows/New-WingetManifest.ps1 -Version $version -Installer "yeet-$version-windows-x64-setup.exe" -OutputDirectory winget
       - name: Write Windows checksums
         shell: msys2 {0}
         run: sha256sum yeet-*.zip yeet-*-setup.exe > SHA256SUMS-windows.txt
@@ -86,6 +87,7 @@ jobs:
           path: |
             yeet-*.zip
             yeet-*-setup.exe
+            winget/*.yaml
             SHA256SUMS-windows.txt
 
   publish:

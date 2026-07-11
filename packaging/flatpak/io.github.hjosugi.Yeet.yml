@@ -1,0 +1,44 @@
+app-id: io.github.hjosugi.Yeet
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: yeet
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --filesystem=host
+  - --talk-name=org.freedesktop.portal.Desktop
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/yeet/cargo
+modules:
+  - name: gtk4-layer-shell
+    buildsystem: meson
+    config-opts:
+      - -Dexamples=false
+      - -Ddocs=false
+      - -Dtests=false
+      - -Dintrospection=false
+      - -Dvapi=false
+    sources:
+      - type: git
+        url: https://github.com/wmww/gtk4-layer-shell.git
+        tag: v1.3.0
+        commit: 1c963c51514581c41b9bdae08cdf69171265cdda
+  - name: yeet
+    buildsystem: simple
+    build-commands:
+      - cargo --offline --locked build --release
+      - install -Dm755 target/release/yeet /app/bin/yeet
+      - install -Dm644 packaging/linux/io.github.hjosugi.Yeet.desktop /app/share/applications/io.github.hjosugi.Yeet.desktop
+      - install -Dm644 packaging/linux/io.github.hjosugi.Yeet.metainfo.xml /app/share/metainfo/io.github.hjosugi.Yeet.metainfo.xml
+      - install -Dm644 assets/io.github.hjosugi.Yeet.svg /app/share/icons/hicolor/scalable/apps/io.github.hjosugi.Yeet.svg
+      - install -Dm644 packaging/linux/yeet.1 /app/share/man/man1/yeet.1
+    sources:
+      - type: dir
+        path: ../..
+      - cargo-sources.json

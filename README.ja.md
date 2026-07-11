@@ -6,9 +6,10 @@ Wayland と Windows 向けの、Yoink ライクな軽量ドラッグ＆ドロッ
 へ置いて移動先を開き、そこからもう一度ドラッグできます。受け入れられた drop
 だけを削除し、Esc や無効な場所への drop で item を失いません。
 
-現在は Rust への書き換え中です。core shelf、file/text drop、複数選択 drag-out、
-pin、永続化、single-instance CLI forwarding、multi-monitor strip、
-`gtk4-layer-shell` と GNOME fallback までを Rust で実装しています。
+0.2 で Rust ネイティブ版へ移行しました。core shelf、file/text/image drop、
+複数選択 drag-out、pin、preview、永続化、settings、clipboard capture、
+single-instance CLI forwarding、multi-monitor strip、`gtk4-layer-shell` と
+GNOME fallback を実装しています。
 
 ## ビルド
 
@@ -33,7 +34,7 @@ CLI:
 ```text
 yeet FILE...   ファイルを追加して表示
 yeet --toggle  表示・非表示を切り替え
-yeet --clear   全 item を削除
+yeet --clear   pin されていない item を削除
 yeet --hidden  非表示で起動
 ```
 

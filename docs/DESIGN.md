@@ -22,8 +22,8 @@ Wayland and Windows.
 ### Non-goals (v1)
 
 - macOS support (Yoink already exists there).
-- Full clipboard *manager* (a lightweight clipboard-capture is planned
-  post-MVP; competing with CopyQ is not the point).
+- Full clipboard *manager* (Yeet captures the current clipboard on demand but
+  does not keep clipboard history; competing with CopyQ is not the point).
 - Cloud sync / Handoff-style device transfer.
 
 ## 2. Prior art
@@ -69,13 +69,14 @@ src/
   model.rs     ShelfItem, persistence, dedupe and pin/removal rules
   ui.rs        GTK shelf/strip widgets and GDK drag-and-drop controllers
   platform.rs  layer-shell, Windows native window styles and fallback
+  settings.rs  persisted user preferences
 ```
 
 Platform functions expose one small surface configuration boundary:
 
 ```text
 configure_shelf(window)
-configure_edge(window, monitor)
+configure_edge(window, monitor, strip_size)
 set_shelf_monitor(window, monitor)
 ```
 
@@ -144,14 +145,13 @@ public global-drag hook either. The portable answer:
   Two surfaces (rather than resizing one mid-drag) so the active drag simply
   crosses from strip → shelf; surface-resize-during-drag is compositor
   minefield territory. **[Spike S1: validate on sway/Hyprland/KWin.]**
-- **Global shortcut:** `org.freedesktop.portal.GlobalShortcuts` (works on
-  KDE, Hyprland, sway ≥ portal support); fallback: compositor keybinding
-  invoking `yeet --toggle` over the single-instance IPC.
+- **Global shortcut:** compositor keybinding invoking `yeet --toggle` over the
+  single-instance IPC. This is deterministic across portals and desktops.
 - **GNOME fallback:** GNOME Shell rejects third-party layer-shell. Fallback
-  mode = no strip; summon via shortcut/CLI/tray; shelf is a normal
+  mode = no strip; summon via shortcut/CLI; shelf is a normal
   always-on-top-requested window. Documented limitation.
-- **Clipboard capture (post-MVP):** `ext-data-control-v1` /
-  `zwlr_data_control_manager_v1` for watching the clipboard without focus.
+- **Clipboard capture:** on-demand through GDK, from the footer button (and a
+  double hotkey press on Windows); Yeet does not watch clipboard history.
 - **HiDPI:** GTK/GDK negotiates output scaling; verify fractional scaling per
   compositor.
 
@@ -163,7 +163,8 @@ public global-drag hook either. The portable answer:
 - **Shelf:** frameless topmost tool window, edge-snapped, rounded corners +
   dark mode via DWM attributes. `WS_EX_TOPMOST` and `HWND_TOPMOST` are
   reapplied whenever the shelf is mapped.
-- **Hotkey:** Ctrl+Alt+Y via `RegisterHotKey`; **Tray:** planned platform integration.
+- **Hotkey:** Ctrl+Alt+Y via `RegisterHotKey`; a quick double press captures
+  the clipboard.
 - **DPI:** per-monitor v2 manifest; multi-monitor strip placement.
 - **Drag out:** GDK → OLE; verify copy/move against Explorer,
   browsers, Office. **[Spike S2: drags from/to elevated apps are blocked by
@@ -185,29 +186,28 @@ forward their command line to the primary instance.
   (`~/.local/share` semantics on Linux, `%LOCALAPPDATA%` on Windows); items
   restored on launch; snippet temp files live in an app-owned dir and are
   garbage-collected when their item is removed.
-- Settings (planned): serialized Rust settings plus a GTK dialog. Keys: edge, outputs,
-  strip size, summon methods, autostart, theme, restore-on-launch,
-  auto-hide (default **on**).
+- Settings: atomically serialized Rust settings plus a GTK dialog. Keys:
+  strip size, autostart, theme, restore-on-launch and auto-hide (default **on**).
 
 ## 7. Packaging
 
 | Target | Artifact |
 |---|---|
-| Arch | AUR `yeet-shelf` (PKGBUILD in-repo) |
+| Arch | AUR-ready `wayland-yeet` PKGBUILD in-repo |
 | Any Linux | Flatpak `io.github.hjosugi.Yeet` (Flathub); note: layer-shell OK in Flatpak |
-| Nix | flake.nix |
-| Windows | Inno Setup installer + `winget` manifest; portable zip |
+| Nix | in-repo derivation |
+| Windows | Inno Setup installer + portable zip; winget metadata after signing |
 | CI | GitHub Actions: Linux + Windows build on PR; artifacts on tag |
 
-Binary name `yeet` (note: an unrelated AUR pacman wrapper uses the name —
-hence AUR package name `yeet-shelf`).
+Binary name `yeet`; distribution package names use `wayland-yeet` to avoid
+collisions with unrelated tools.
 
 ## 8. Testing
 
 - **Unit:** ShelfModel, persistence and path handling (`cargo test`).
-- **Wayland integration (CI):** headless sway/cage + `wtype`/`ydotool`
-  scripted DnD where feasible; else scripted smoke: launch, IPC summon,
-  screenshot compare. Exploratory — tracked as a spike.
+- **Wayland integration (CI):** a headless Weston session proves the native
+  Wayland backend launches and remains responsive. Real DnD stays in the
+  compositor matrix because synthetic input is compositor-specific.
 - **Windows:** CI build + launch smoke test; manual test plan for DnD
   against Explorer/browsers.
 - **Manual matrix:** sway, Hyprland, KWin (X11-free), GNOME (fallback),
