@@ -285,7 +285,8 @@ fn normalize_existing_path(path: &Path) -> Option<PathBuf> {
 
 #[cfg(windows)]
 fn comparison_path(path: &Path) -> PathBuf {
-    PathBuf::from(path.to_string_lossy().to_lowercase())
+    let normalized = fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    PathBuf::from(normalized.to_string_lossy().to_lowercase())
 }
 
 #[cfg(not(windows))]
