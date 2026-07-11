@@ -1,0 +1,36 @@
+pkgname=wayland-yeet
+pkgver=0.2.0
+pkgrel=1
+pkgdesc='Native Yoink-style drag-and-drop shelf for Wayland and Windows'
+arch=('x86_64')
+url='https://github.com/hjosugi/wayland-yeet'
+license=('MIT')
+depends=('gtk4' 'gtk4-layer-shell')
+makedepends=('cargo')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  cargo build --release --locked
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  cargo test --locked
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 target/release/yeet "$pkgdir/usr/bin/yeet"
+  install -Dm644 packaging/linux/io.github.hjosugi.Yeet.desktop "$pkgdir/usr/share/applications/io.github.hjosugi.Yeet.desktop"
+  install -Dm644 packaging/linux/io.github.hjosugi.Yeet.metainfo.xml "$pkgdir/usr/share/metainfo/io.github.hjosugi.Yeet.metainfo.xml"
+  install -Dm644 assets/io.github.hjosugi.Yeet.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.hjosugi.Yeet.svg"
+  install -Dm644 packaging/linux/yeet.1 "$pkgdir/usr/share/man/man1/yeet.1"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

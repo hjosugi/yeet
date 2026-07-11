@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Yeet
+Comment=A drag-and-drop shelf for Wayland and Windows
+Exec=yeet
+Icon=io.github.hjosugi.Yeet
+Terminal=false
+Categories=Utility;FileTools;
+Keywords=drag;drop;shelf;files;yoink;
+StartupNotify=false
+X-GNOME-UsesNotifications=true

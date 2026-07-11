@@ -5,28 +5,74 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  linux:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          version: '6.8.*'
-          cache: true
-
-      - name: Install Linux build deps
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev ninja-build
-
-      - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Install GTK and layer-shell development files
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libgtk-4-dev libgtk4-layer-shell-dev xvfb weston
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --all-targets --locked
       - name: Build
-        run: cmake --build build --parallel --config Release
+        run: cargo build --release --locked
+      - name: Launch smoke test
+        shell: bash
+        run: |
+          set +e
+          xvfb-run -a timeout 5s ./target/release/yeet --hidden
+          status=$?
+          test "$status" -eq 124
+      - name: Native Wayland smoke test
+        shell: bash
+        run: |
+          runtime="$(mktemp -d)"
+          chmod 700 "$runtime"
+          XDG_RUNTIME_DIR="$runtime" weston --backend=headless-backend.so --socket=yeet-ci --idle-time=0 >/tmp/weston.log 2>&1 &
+          weston_pid=$!
+          trap 'kill $weston_pid || true; rm -rf "$runtime"' EXIT
+          for _ in $(seq 1 50); do test -S "$runtime/yeet-ci" && break; sleep .1; done
+          set +e
+          XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY=yeet-ci GDK_BACKEND=wayland timeout 5s ./target/release/yeet --hidden
+          status=$?
+          test "$status" -eq 124
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yeet-linux
+          path: target/release/yeet
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-rust
+      - name: Test
+        shell: msys2 {0}
+        run: cargo test --all-targets --locked
+      - name: Build
+        shell: msys2 {0}
+        run: cargo build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yeet-windows
+          path: target/release/yeet.exe

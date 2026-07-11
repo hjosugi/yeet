@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libgtk-4-dev libgtk4-layer-shell-dev
+      - run: cargo build --release --locked
+      - name: Verify tag matches Cargo version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          test "$version" = "$cargo_version"
+      - name: Stage archive
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          root="yeet-${version}-linux-x86_64"
+          install -Dm755 target/release/yeet "$root/bin/yeet"
+          install -Dm644 packaging/linux/io.github.hjosugi.Yeet.desktop "$root/share/applications/io.github.hjosugi.Yeet.desktop"
+          install -Dm644 packaging/linux/io.github.hjosugi.Yeet.metainfo.xml "$root/share/metainfo/io.github.hjosugi.Yeet.metainfo.xml"
+          install -Dm644 assets/io.github.hjosugi.Yeet.svg "$root/share/icons/hicolor/scalable/apps/io.github.hjosugi.Yeet.svg"
+          install -Dm644 packaging/linux/yeet.1 "$root/share/man/man1/yeet.1"
+          install -Dm644 LICENSE "$root/share/licenses/wayland-yeet/LICENSE"
+          tar -czf "${root}.tar.gz" "$root"
+          sha256sum "${root}.tar.gz" > SHA256SUMS-linux.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: |
+            yeet-*.tar.gz
+            SHA256SUMS-linux.txt
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-rust
+            zip
+      - name: Build and bundle GTK runtime
+        shell: msys2 {0}
+        run: |
+          cargo build --release --locked
+          version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          test "$version" = "$cargo_version"
+          root="yeet-${version}-windows-x64"
+          mkdir -p "$root/bin" "$root/lib" "$root/share/glib-2.0"
+          cp target/release/yeet.exe "$root/"
+          ldd target/release/yeet.exe | awk '/\/ucrt64\/bin\/.*\.dll/ { print $3 }' | xargs -r -I{} cp {} "$root/"
+          cp -r /ucrt64/lib/gdk-pixbuf-2.0 "$root/lib/gdk-pixbuf-2.0"
+          cp -r /ucrt64/share/glib-2.0/schemas "$root/share/glib-2.0/"
+          zip -r "${root}.zip" "$root"
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          choco install innosetup --yes --no-progress
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" packaging/windows/yeet.iss
+      - name: Write Windows checksums
+        shell: msys2 {0}
+        run: sha256sum yeet-*.zip yeet-*-setup.exe > SHA256SUMS-windows.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: |
+            yeet-*.zip
+            yeet-*-setup.exe
+            SHA256SUMS-windows.txt
+
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" release/* --repo "${{ github.repository }}" --verify-tag --generate-notes

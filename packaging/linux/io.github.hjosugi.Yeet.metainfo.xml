@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.hjosugi.Yeet</id>
+  <name>Yeet</name>
+  <summary>Temporarily hold files while dragging between applications</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Yeet is a lightweight drag-and-drop shelf. Drop files or text on its
+    edge shelf, navigate to a destination, then drag the items back out.</p>
+    <p>It integrates with layer-shell compositors on Wayland and uses native
+    topmost tool windows on Windows.</p>
+  </description>
+  <launchable type="desktop-id">io.github.hjosugi.Yeet.desktop</launchable>
+  <url type="homepage">https://github.com/hjosugi/wayland-yeet</url>
+  <url type="bugtracker">https://github.com/hjosugi/wayland-yeet/issues</url>
+  <developer id="io.github.hjosugi"><name>hjosugi</name></developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.2.0" date="2026-07-12"/>
+  </releases>
+</component>

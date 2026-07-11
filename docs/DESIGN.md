@@ -36,7 +36,7 @@ Wayland and Windows.
 | Windows | — | ✅ | ❌ | ✅ |
 | Stack / multi-drag | ✅ | ✅ | ✅ | ✅ |
 | Non-file snippets | ✅ | ❌ | ❌ | ✅ (text/images) |
-| Runtime | native | Electron | GTK3 | Qt 6 native |
+| Runtime | native | Electron | GTK3 | Rust + GTK 4 |
 
 Yoink's shelf UI (reference: real-world usage screenshots) is a narrow
 vertical panel at the screen edge: thumbnail + filename per item, per-item
@@ -45,44 +45,44 @@ with a settings gear and a clear-all button. Yeet adopts this layout.
 
 ## 3. Architecture
 
-**Stack: C++20 / Qt 6 (≥ 6.5) / QML, CMake.**
+**Stack: Rust (≥ 1.92) / gtk4-rs / gtk4-layer-shell, Cargo.**
 
-Why Qt over the alternatives considered:
+Why this stack:
 
-- **GTK4 + gtk4-layer-shell** — excellent on Wayland, but second-class and
-  painful to ship on Windows. Rejected by G4.
+- **Python + PySide6** — excellent cross-platform DnD, but no safe Python API
+  for assigning a Qt client surface the layer-shell role. Rejected by G3.
+- **Go + Fyne** — simple distribution, but external drag-source and
+  layer-shell support do not cover the core workflow. Rejected by G1/G3.
 - **Electron (DropPoint's stack)** — proven drag-out via
   `webContents.startDrag()`, but no layer-shell, flaky Wayland global
   shortcuts, and a heavy runtime. Rejected by G3/G6.
-- **Qt 6** — `QDrag`/`QMimeData` map to `wl_data_device` on Wayland and OLE
-  (`CF_HDROP`) on Windows; LayerShellQt provides `zwlr_layer_shell_v1`;
-  QML gives cheap polished UI on both targets. Chosen.
+- **Rust + GTK 4** — GTK/GDK maps drag-and-drop to `wl_data_device` on Wayland
+  and OLE on Windows. Safe Rust bindings cover both GTK and layer-shell, so
+  application and platform integration code share one implementation language.
+  Chosen.
 
 ### Module layout
 
 ```
 src/
-  core/       ShelfModel, ShelfItem, persistence, single-instance, CLI
-  ui/         QML engine setup, DragOutHelper, icon/thumbnail provider
-  platform/
-    wayland/  LayerShellQt strip + shelf surfaces, portal shortcuts   (Linux only)
-    windows/  topmost strip, RegisterHotKey, DPI, dark title-bar      (Windows only)
-    fallback/ plain-window mode (GNOME, unknown compositors)
-qml/          Main.qml, ShelfView.qml, EdgeStrip.qml, delegates
+  main.rs      GtkApplication lifecycle and forwarded CLI arguments
+  model.rs     ShelfItem, persistence, dedupe and pin/removal rules
+  ui.rs        GTK shelf/strip widgets and GDK drag-and-drop controllers
+  platform.rs  layer-shell, Windows native window styles and fallback
 ```
 
-Platform backends implement one interface:
+Platform functions expose one small surface configuration boundary:
 
-```cpp
-class TriggerBackend {
-    virtual void installEdgeStrip(Edge edge, const OutputSet &outputs) = 0;
-    virtual void showShelf(SummonReason reason) = 0;   // DragHover | Hotkey | Cli | Tray
-    virtual void hideShelf() = 0;                      // called when model empties
-};
+```text
+configure_shelf(window)
+configure_edge(window, monitor)
+set_shelf_monitor(window, monitor)
 ```
 
-Selection at startup: Wayland + layer-shell available → `wayland`;
-Windows → `windows`; otherwise → `fallback`.
+Selection at startup: Wayland + layer-shell protocol available → `wayland`;
+Windows → `windows`; otherwise → `fallback`. GNOME is short-circuited to
+fallback because it intentionally omits the protocol; other Wayland desktops
+are checked against protocol availability at runtime.
 
 ## 4. Core UX specification
 
@@ -136,8 +136,8 @@ public global-drag hook either. The portable answer:
 
 ### 5.2 Wayland (Linux)
 
-- **Edge strip:** `zwlr_layer_shell_v1` surface via **LayerShellQt**
-  (build-time optional dependency), layer=`overlay`, anchored to one edge,
+- **Edge strip:** `zwlr_layer_shell_v1` surface via **gtk4-layer-shell**,
+  layer=`overlay`, anchored to one edge,
   `exclusive_zone=0` so it overlays without reserving space. Works on
   wlroots compositors and KWin.
 - **Shelf:** a *second* layer surface anchored adjacent to the strip.
@@ -152,20 +152,20 @@ public global-drag hook either. The portable answer:
   always-on-top-requested window. Documented limitation.
 - **Clipboard capture (post-MVP):** `ext-data-control-v1` /
   `zwlr_data_control_manager_v1` for watching the clipboard without focus.
-- **HiDPI:** fractional-scale-v1 comes free with Qt ≥ 6.5; verify per
+- **HiDPI:** GTK/GDK negotiates output scaling; verify fractional scaling per
   compositor.
 
 ### 5.3 Windows
 
 - **Edge strip:** frameless `WS_EX_TOPMOST | WS_EX_TOOLWINDOW` window,
-  4–8 px at the edge, registered as an OLE drop target (Qt does this via
-  the normal `DropArea`). Same reveal flow as Wayland.
+  4–8 px at the edge, registered as an OLE drop target through GDK's normal
+  `DropTarget`. Same reveal flow as Wayland.
 - **Shelf:** frameless topmost tool window, edge-snapped, rounded corners +
-  dark mode via DWM attributes.
-- **Hotkey:** `RegisterHotKey`; **Tray:** `QSystemTrayIcon` (also used on
-  Linux via StatusNotifier).
+  dark mode via DWM attributes. `WS_EX_TOPMOST` and `HWND_TOPMOST` are
+  reapplied whenever the shelf is mapped.
+- **Hotkey:** Ctrl+Alt+Y via `RegisterHotKey`; **Tray:** planned platform integration.
 - **DPI:** per-monitor v2 manifest; multi-monitor strip placement.
-- **Drag out:** Qt → OLE `CF_HDROP`; verify copy/move against Explorer,
+- **Drag out:** GDK → OLE; verify copy/move against Explorer,
   browsers, Office. **[Spike S2: drags from/to elevated apps are blocked by
   UIPI — document, don't fight.]**
 - **Autostart:** `HKCU\...\Run` key (Windows) / XDG autostart `.desktop`
@@ -173,19 +173,19 @@ public global-drag hook either. The portable answer:
 
 ### 5.4 Single instance & CLI
 
-First instance wins; later invocations forward args over `QLocalSocket`
-(named pipe on Windows, Unix socket on Linux).
+`GtkApplication`/`GApplication` owns the application id; later invocations
+forward their command line to the primary instance.
 `yeet FILE… | --toggle | --clear` — dragon-style terminal integration.
 
 ## 6. Data & persistence
 
-- Model: `ShelfModel : QAbstractListModel` — the single source of truth;
-  emits `becameEmpty()` → backend `hideShelf()`.
-- Persistence: JSON at `QStandardPaths::AppDataLocation`
-  (`~/.local/state` semantics on Linux, `%APPDATA%` on Windows); items
+- Model: the Rust `ShelfModel` is the single source of truth; UI mutations
+  refresh the list and hide the shelf when it becomes empty.
+- Persistence: atomically replaced JSON in the platform project data directory
+  (`~/.local/share` semantics on Linux, `%LOCALAPPDATA%` on Windows); items
   restored on launch; snippet temp files live in an app-owned dir and are
   garbage-collected when their item is removed.
-- Settings: `QSettings` + a QML settings dialog. Keys: edge, outputs,
+- Settings (planned): serialized Rust settings plus a GTK dialog. Keys: edge, outputs,
   strip size, summon methods, autostart, theme, restore-on-launch,
   auto-hide (default **on**).
 
@@ -204,7 +204,7 @@ hence AUR package name `yeet-shelf`).
 
 ## 8. Testing
 
-- **Unit:** ShelfModel, persistence, URL/mime handling (Qt Test, CTest).
+- **Unit:** ShelfModel, persistence and path handling (`cargo test`).
 - **Wayland integration (CI):** headless sway/cage + `wtype`/`ydotool`
   scripted DnD where feasible; else scripted smoke: launch, IPC summon,
   screenshot compare. Exploratory — tracked as a spike.
@@ -219,7 +219,7 @@ hence AUR package name `yeet-shelf`).
 |---|---|---|
 | S1 | Mid-drag reveal: does the drag cleanly continue from strip surface onto a newly mapped shelf surface on every compositor? | Two-surface design; prototype week 1; per-compositor fallback = pre-mapped transparent shelf |
 | S2 | Windows UIPI blocks DnD with elevated apps | Document; optional elevated helper is out of scope |
-| S3 | `QDrag::exec()` quirks on Wayland (nested loop, cancel events) across compositors | Covered by test matrix; upstream Qt bugs get minimal repros |
+| S3 | GDK drag completion/cancellation differences across compositors | Check the selected action at drag end; cover with the compositor matrix |
 | S4 | GNOME has no layer-shell for third parties | Fallback mode is a first-class citizen, not an afterthought |
 | S5 | GlobalShortcuts portal absent on some compositors | Always ship `yeet --toggle` IPC path for native keybinds |
 

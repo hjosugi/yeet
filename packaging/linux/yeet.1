@@ -1,0 +1,53 @@
+.TH YEET 1 "July 2026" "Yeet 0.2.0" "User Commands"
+.SH NAME
+yeet \- native drag-and-drop shelf for Wayland and Windows
+.SH SYNOPSIS
+.B yeet
+.RI [ OPTION ]... [ FILE ]...
+.SH DESCRIPTION
+Yeet holds files and snippets temporarily so they can be dragged into another
+application later. Running the command again forwards arguments to the existing
+desktop-session instance.
+.SH OPTIONS
+.TP
+.B \-\-toggle
+Show or hide the shelf.
+.TP
+.B \-\-clear
+Remove all unpinned items.
+.TP
+.B \-\-hidden
+Start the primary instance without showing its shelf.
+.TP
+.B \-\-help
+Show command-line help.
+.TP
+.B \-\-version
+Show the installed version.
+.SH SHORTCUTS
+.TP
+.B Ctrl+A
+Select every shelf item.
+.TP
+.B Delete
+Remove selected items.
+.TP
+.B Space
+Preview the first selected item.
+.TP
+.B Escape
+Hide the shelf.
+.SH WAYLAND
+On compositors supporting layer-shell, Yeet creates a drop target at the right
+edge of each monitor. On GNOME and compositors without layer-shell, bind
+.B yeet --toggle
+in the desktop shortcut settings.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/yeet/settings.json
+Per-user preferences.
+.TP
+.I $XDG_DATA_HOME/yeet/shelf.json
+Persisted shelf state.
+.SH SEE ALSO
+Project documentation: https://github.com/hjosugi/wayland-yeet
