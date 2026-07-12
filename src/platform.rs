@@ -308,8 +308,8 @@ mod windows_impl {
     use wayland_yeet::settings::ScreenEdge;
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Dwm::{
-        DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
-        DwmSetWindowAttribute,
+        DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
+        DWM_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey,
@@ -453,7 +453,7 @@ mod windows_impl {
                 let _ = DwmSetWindowAttribute(
                     hwnd,
                     DWMWA_WINDOW_CORNER_PREFERENCE,
-                    (&corners as *const _).cast(),
+                    (&corners as *const DWM_WINDOW_CORNER_PREFERENCE).cast(),
                     std::mem::size_of_val(&corners) as u32,
                 );
             }

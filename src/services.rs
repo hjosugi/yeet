@@ -225,8 +225,8 @@ mod backend {
 
     fn tray_icon() -> Icon {
         let mut rgba = vec![0_u8; 32 * 32 * 4];
-        for y in 0..32 {
-            for x in 0..32 {
+        for y in 0_usize..32 {
+            for x in 0_usize..32 {
                 let offset = (y * 32 + x) * 4;
                 let white_y = (y < 15 && (x.abs_diff(8 + y / 2) < 2 || x.abs_diff(24 - y / 2) < 2))
                     || (y >= 14 && x.abs_diff(16) < 2);
