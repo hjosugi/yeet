@@ -9,6 +9,40 @@ permissions:
   contents: read
 
 jobs:
+  arch-metadata:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check generated SRCINFO files
+        shell: bash
+        run: |
+          useradd --create-home builder
+          for spec in "PKGBUILD:.SRCINFO" "PKGBUILD-git:.SRCINFO-git"; do
+            pkgbuild="${spec%%:*}"
+            srcinfo="${spec#*:}"
+            generated="$(mktemp)"
+            builddir="$(mktemp -d)"
+            cp "packaging/arch/$pkgbuild" "$builddir/PKGBUILD"
+            chown -R builder:builder "$builddir"
+            su builder --shell /bin/bash --command \
+              "cd '$builddir' && makepkg --printsrcinfo" \
+              > "$generated"
+            diff -u "packaging/arch/$srcinfo" "$generated"
+          done
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - name: Check flake
+        run: nix flake check --print-build-logs
+      - name: Build default package
+        run: nix build .#default --print-build-logs
+      - name: Run default app
+        run: nix run . -- --version
+
   linux:
     runs-on: ubuntu-latest
     steps:

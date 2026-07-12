@@ -1,23 +1,45 @@
 use gtk::gdk;
+use wayland_yeet::settings::{ScreenEdge, Theme};
+
+#[cfg(target_os = "windows")]
+static THEME_OVERRIDE: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(0);
+
+#[cfg(target_os = "windows")]
+pub fn set_theme(theme: Theme) {
+    use std::sync::atomic::Ordering;
+
+    THEME_OVERRIDE.store(
+        match theme {
+            Theme::System => 0,
+            Theme::Light => 1,
+            Theme::Dark => 2,
+        },
+        Ordering::Relaxed,
+    );
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn set_theme(_theme: Theme) {}
 
 #[cfg(not(target_os = "linux"))]
 use gtk::prelude::GtkWindowExt;
 
 #[cfg(target_os = "linux")]
 pub fn layer_shell_supported() -> bool {
-    use glib::prelude::ObjectExt;
-
     if std::env::var("XDG_CURRENT_DESKTOP")
         .is_ok_and(|desktop| desktop.to_ascii_lowercase().contains("gnome"))
     {
         return false;
     }
-    let is_wayland = gdk::Display::default()
-        .is_some_and(|display| display.type_().name() == "GdkWaylandDisplay");
-    is_wayland && gtk4_layer_shell::is_supported()
+    wayland_display_available() && gtk4_layer_shell::is_supported()
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+pub fn install_global_hotkey(callback: impl Fn() + 'static) {
+    linux_impl::install_global_hotkey(callback);
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 pub fn install_global_hotkey(_callback: impl Fn() + 'static) {}
 
 #[cfg(target_os = "windows")]
@@ -31,7 +53,7 @@ pub fn layer_shell_supported() -> bool {
 }
 
 #[cfg(target_os = "linux")]
-pub fn configure_shelf(window: &gtk::ApplicationWindow) {
+pub fn configure_shelf(window: &gtk::ApplicationWindow, edge: ScreenEdge) {
     use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
     if !layer_shell_supported() {
@@ -40,10 +62,12 @@ pub fn configure_shelf(window: &gtk::ApplicationWindow) {
     window.init_layer_shell();
     window.set_layer(Layer::Overlay);
     window.set_namespace(Some("yeet-shelf"));
-    window.set_anchor(Edge::Right, true);
+    window.set_anchor(Edge::Right, edge == ScreenEdge::Right);
+    window.set_anchor(Edge::Left, edge == ScreenEdge::Left);
     window.set_anchor(Edge::Top, true);
     window.set_anchor(Edge::Bottom, true);
-    window.set_margin(Edge::Right, 8);
+    window.set_margin(Edge::Right, if edge == ScreenEdge::Right { 8 } else { 0 });
+    window.set_margin(Edge::Left, if edge == ScreenEdge::Left { 8 } else { 0 });
     window.set_margin(Edge::Top, 48);
     window.set_margin(Edge::Bottom, 48);
     window.set_exclusive_zone(0);
@@ -51,18 +75,23 @@ pub fn configure_shelf(window: &gtk::ApplicationWindow) {
 }
 
 #[cfg(target_os = "windows")]
-pub fn configure_shelf(window: &gtk::ApplicationWindow) {
+pub fn configure_shelf(window: &gtk::ApplicationWindow, edge: ScreenEdge) {
     window.set_decorated(false);
-    windows_impl::configure_shelf(window);
+    windows_impl::configure_shelf(window, edge);
 }
 
 #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
-pub fn configure_shelf(window: &gtk::ApplicationWindow) {
+pub fn configure_shelf(window: &gtk::ApplicationWindow, _edge: ScreenEdge) {
     window.set_decorated(false);
 }
 
 #[cfg(target_os = "linux")]
-pub fn configure_edge(window: &gtk::Window, monitor: &gdk::Monitor, _strip_size: i32) {
+pub fn configure_edge(
+    window: &gtk::Window,
+    monitor: &gdk::Monitor,
+    _strip_size: i32,
+    edge: ScreenEdge,
+) {
     use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
     if !layer_shell_supported() {
@@ -72,7 +101,8 @@ pub fn configure_edge(window: &gtk::Window, monitor: &gdk::Monitor, _strip_size:
     window.set_layer(Layer::Overlay);
     window.set_namespace(Some("yeet-edge-strip"));
     window.set_monitor(Some(monitor));
-    window.set_anchor(Edge::Right, true);
+    window.set_anchor(Edge::Right, edge == ScreenEdge::Right);
+    window.set_anchor(Edge::Left, edge == ScreenEdge::Left);
     window.set_anchor(Edge::Top, true);
     window.set_anchor(Edge::Bottom, true);
     window.set_exclusive_zone(0);
@@ -80,7 +110,11 @@ pub fn configure_edge(window: &gtk::Window, monitor: &gdk::Monitor, _strip_size:
 }
 
 #[cfg(target_os = "linux")]
-pub fn set_shelf_monitor(window: &gtk::ApplicationWindow, monitor: &gdk::Monitor) {
+pub fn set_shelf_monitor(
+    window: &gtk::ApplicationWindow,
+    monitor: &gdk::Monitor,
+    _edge: ScreenEdge,
+) {
     use gtk4_layer_shell::LayerShell;
 
     if layer_shell_supported() {
@@ -89,12 +123,22 @@ pub fn set_shelf_monitor(window: &gtk::ApplicationWindow, monitor: &gdk::Monitor
 }
 
 #[cfg(target_os = "windows")]
-pub fn configure_edge(window: &gtk::Window, monitor: &gdk::Monitor, strip_size: i32) {
-    windows_impl::configure_window(window, monitor, true, strip_size);
+pub fn configure_edge(
+    window: &gtk::Window,
+    monitor: &gdk::Monitor,
+    strip_size: i32,
+    edge: ScreenEdge,
+) {
+    windows_impl::configure_window(window, monitor, true, strip_size, edge);
 }
 
 #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
-pub fn configure_edge(window: &gtk::Window, _monitor: &gdk::Monitor, _strip_size: i32) {
+pub fn configure_edge(
+    window: &gtk::Window,
+    _monitor: &gdk::Monitor,
+    _strip_size: i32,
+    _edge: ScreenEdge,
+) {
     window.set_decorated(false);
 }
 
@@ -158,12 +202,100 @@ pub fn set_autostart(_enabled: bool) -> std::io::Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-pub fn set_shelf_monitor(window: &gtk::ApplicationWindow, monitor: &gdk::Monitor) {
-    windows_impl::move_shelf_to_monitor(window, monitor);
+pub fn set_shelf_monitor(
+    window: &gtk::ApplicationWindow,
+    monitor: &gdk::Monitor,
+    edge: ScreenEdge,
+) {
+    windows_impl::move_shelf_to_monitor(window, monitor, edge);
 }
 
 #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
-pub fn set_shelf_monitor(_window: &gtk::ApplicationWindow, _monitor: &gdk::Monitor) {}
+pub fn set_shelf_monitor(
+    _window: &gtk::ApplicationWindow,
+    _monitor: &gdk::Monitor,
+    _edge: ScreenEdge,
+) {
+}
+
+#[cfg(target_os = "linux")]
+fn wayland_display_available() -> bool {
+    use glib::prelude::ObjectExt;
+
+    gdk::Display::default().is_some_and(|display| display.type_().name() == "GdkWaylandDisplay")
+}
+
+#[cfg(target_os = "linux")]
+mod linux_impl {
+    use std::sync::mpsc::{self, TryRecvError};
+    use std::time::Duration;
+
+    use ashpd::desktop::global_shortcuts::{BindShortcutsOptions, GlobalShortcuts, NewShortcut};
+    use futures_util::StreamExt;
+
+    const TOGGLE_SHORTCUT_ID: &str = "toggle-shelf";
+
+    pub fn install_global_hotkey(callback: impl Fn() + 'static) {
+        if !super::wayland_display_available() {
+            return;
+        }
+
+        // Portal work uses Tokio on a worker thread. Keep the non-Send GTK/UI
+        // callback on the main thread and preserve one callback per activation
+        // so the UI can continue to detect double presses for clipboard capture.
+        let (sender, receiver) = mpsc::channel();
+        glib::timeout_add_local(Duration::from_millis(25), move || {
+            loop {
+                match receiver.try_recv() {
+                    Ok(()) => callback(),
+                    Err(TryRecvError::Empty) => return glib::ControlFlow::Continue,
+                    Err(TryRecvError::Disconnected) => return glib::ControlFlow::Break,
+                }
+            }
+        });
+
+        let _ = std::thread::Builder::new()
+            .name("yeet-global-shortcuts".into())
+            .spawn(move || {
+                let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                else {
+                    return;
+                };
+                // A missing portal, an unsupported backend, or a rejected bind
+                // is optional integration. In all cases Yeet keeps running and
+                // `yeet --toggle` remains available as the compositor fallback.
+                let _ = runtime.block_on(run_global_shortcut(sender));
+            });
+    }
+
+    async fn run_global_shortcut(sender: mpsc::Sender<()>) -> ashpd::Result<()> {
+        let portal = GlobalShortcuts::new().await?;
+        let session = portal.create_session(Default::default()).await?;
+        let shortcut = NewShortcut::new(TOGGLE_SHORTCUT_ID, "Show or hide the Yeet shelf")
+            .preferred_trigger("CTRL+ALT+Y");
+        let request = portal
+            .bind_shortcuts(&session, &[shortcut], None, BindShortcutsOptions::default())
+            .await?;
+        let bound = request.response()?;
+        if !bound
+            .shortcuts()
+            .iter()
+            .any(|shortcut| shortcut.id() == TOGGLE_SHORTCUT_ID)
+        {
+            return Ok(());
+        }
+
+        let mut activated = portal.receive_activated().await?;
+        while let Some(event) = activated.next().await {
+            if event.shortcut_id() == TOGGLE_SHORTCUT_ID && sender.send(()).is_err() {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
@@ -172,8 +304,13 @@ mod windows_impl {
     use glib::object::Cast;
     use gtk::gdk;
     use gtk::prelude::*;
+    use std::sync::atomic::Ordering;
+    use wayland_yeet::settings::ScreenEdge;
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
+    use windows::Win32::Graphics::Dwm::{
+        DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+        DwmSetWindowAttribute,
+    };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey,
     };
@@ -214,11 +351,11 @@ mod windows_impl {
         Box::leak(Box::new(filter));
     }
 
-    pub fn configure_shelf(window: &gtk::ApplicationWindow) {
+    pub fn configure_shelf(window: &gtk::ApplicationWindow, edge: ScreenEdge) {
         let window = window.clone().upcast::<gtk::Window>();
-        window.connect_realize(|window| apply_to_current_monitor(window, false));
+        window.connect_realize(move |window| apply_to_current_monitor(window, false, edge));
         // Reassert HWND_TOPMOST every time the hidden shelf is mapped again.
-        window.connect_map(|window| apply_to_current_monitor(window, false));
+        window.connect_map(move |window| apply_to_current_monitor(window, false, edge));
     }
 
     pub fn configure_window(
@@ -226,18 +363,26 @@ mod windows_impl {
         monitor: &gdk::Monitor,
         edge: bool,
         strip_size: i32,
+        screen_edge: ScreenEdge,
     ) {
         let realize_monitor = monitor.clone();
-        window.connect_realize(move |window| apply(window, &realize_monitor, edge, strip_size));
+        window.connect_realize(move |window| {
+            apply(window, &realize_monitor, edge, strip_size, screen_edge)
+        });
         let map_monitor = monitor.clone();
-        window.connect_map(move |window| apply(window, &map_monitor, edge, strip_size));
+        window
+            .connect_map(move |window| apply(window, &map_monitor, edge, strip_size, screen_edge));
     }
 
-    pub fn move_shelf_to_monitor(window: &gtk::ApplicationWindow, monitor: &gdk::Monitor) {
-        apply(window.upcast_ref(), monitor, false, 6);
+    pub fn move_shelf_to_monitor(
+        window: &gtk::ApplicationWindow,
+        monitor: &gdk::Monitor,
+        screen_edge: ScreenEdge,
+    ) {
+        apply(window.upcast_ref(), monitor, false, 6, screen_edge);
     }
 
-    fn apply_to_current_monitor(window: &gtk::Window, edge: bool) {
+    fn apply_to_current_monitor(window: &gtk::Window, edge: bool, screen_edge: ScreenEdge) {
         let Some(surface) = window.surface() else {
             return;
         };
@@ -249,11 +394,17 @@ mod windows_impl {
                 .and_then(|item| item.downcast::<gdk::Monitor>().ok())
         });
         if let Some(monitor) = monitor {
-            apply(window, &monitor, edge, 6);
+            apply(window, &monitor, edge, 6, screen_edge);
         }
     }
 
-    fn apply(window: &gtk::Window, monitor: &gdk::Monitor, edge: bool, strip_size: i32) {
+    fn apply(
+        window: &gtk::Window,
+        monitor: &gdk::Monitor,
+        edge: bool,
+        strip_size: i32,
+        screen_edge: ScreenEdge,
+    ) {
         let Some(surface) = window.surface() else {
             return;
         };
@@ -273,7 +424,11 @@ mod windows_impl {
         } else {
             (geometry.height() - 96 * scale).min(560 * scale)
         };
-        let x = geometry.x() + geometry.width() - width;
+        let x = if screen_edge == ScreenEdge::Right {
+            geometry.x() + geometry.width() - width
+        } else {
+            geometry.x()
+        };
         let y = if edge {
             geometry.y()
         } else {
@@ -286,13 +441,22 @@ mod windows_impl {
                 style |= WS_EX_NOACTIVATE.0 as isize;
             }
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
-            let dark: i32 = 1;
+            let dark: i32 = i32::from(prefers_dark());
             let _ = DwmSetWindowAttribute(
                 hwnd,
                 DWMWA_USE_IMMERSIVE_DARK_MODE,
                 (&dark as *const i32).cast(),
                 std::mem::size_of::<i32>() as u32,
             );
+            if !edge {
+                let corners = DWMWCP_ROUND;
+                let _ = DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_WINDOW_CORNER_PREFERENCE,
+                    (&corners as *const _).cast(),
+                    std::mem::size_of_val(&corners) as u32,
+                );
+            }
             let _ = SetWindowPos(
                 hwnd,
                 Some(HWND_TOPMOST),
@@ -302,6 +466,27 @@ mod windows_impl {
                 height,
                 SWP_NOACTIVATE | SWP_FRAMECHANGED,
             );
+        }
+    }
+
+    fn prefers_dark() -> bool {
+        match super::THEME_OVERRIDE.load(Ordering::Relaxed) {
+            1 => false,
+            2 => true,
+            _ => std::process::Command::new("reg")
+                .args([
+                    "query",
+                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+                    "/v",
+                    "AppsUseLightTheme",
+                ])
+                .output()
+                .is_ok_and(|output| {
+                    String::from_utf8_lossy(&output.stdout)
+                        .split_whitespace()
+                        .last()
+                        .is_some_and(|value| value == "0x0")
+                }),
         }
     }
 }

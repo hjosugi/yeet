@@ -1,34 +1,39 @@
-pkgname=yeet-shelf
-pkgver=0.2.0
+pkgname=yeet-shelf-git
+pkgver=0.2.0.r0.g0000000
 pkgrel=1
-pkgdesc='Native Yoink-style drag-and-drop shelf for Wayland and Windows'
+pkgdesc='Native Yoink-style drag-and-drop shelf for Wayland and Windows (git)'
 arch=('x86_64')
 url='https://github.com/hjosugi/wayland-yeet'
 license=('MIT')
 depends=('gtk4' 'gtk4-layer-shell')
-makedepends=('cargo')
-provides=('yeet')
-conflicts=('yeet')
-source=("yeet-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('247fd80bb1c93e2ed7095c979c278c0233ee1335a920d7cd321e09ee72a0026e')
+makedepends=('cargo' 'git')
+provides=('yeet-shelf' 'yeet')
+conflicts=('yeet-shelf' 'yeet')
+source=('yeet::git+https://github.com/hjosugi/wayland-yeet.git')
+sha256sums=('SKIP')
+
+pkgver() {
+  cd yeet
+  git describe --long --tags --abbrev=7 | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
 
 prepare() {
-  cd "wayland-yeet-$pkgver"
+  cd yeet
   cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
 }
 
 build() {
-  cd "wayland-yeet-$pkgver"
+  cd yeet
   cargo build --release --locked
 }
 
 check() {
-  cd "wayland-yeet-$pkgver"
+  cd yeet
   cargo test --locked
 }
 
 package() {
-  cd "wayland-yeet-$pkgver"
+  cd yeet
   install -Dm755 target/release/yeet "$pkgdir/usr/bin/yeet"
   install -Dm644 packaging/linux/io.github.hjosugi.Yeet.desktop "$pkgdir/usr/share/applications/io.github.hjosugi.Yeet.desktop"
   install -Dm644 packaging/linux/io.github.hjosugi.Yeet.metainfo.xml "$pkgdir/usr/share/metainfo/io.github.hjosugi.Yeet.metainfo.xml"

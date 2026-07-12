@@ -53,7 +53,12 @@ impl ShelfModel {
         let data = fs::read(&state_path)?;
         let mut items: Vec<ShelfItem> = serde_json::from_slice(&data)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let stored_count = items.len();
         items.retain(|item| item.path.exists());
+        let missing_count = stored_count - items.len();
+        if missing_count > 0 {
+            eprintln!("yeet: removed {missing_count} missing persisted item(s)");
+        }
         deduplicate(&mut items);
         Ok(Self {
             items,

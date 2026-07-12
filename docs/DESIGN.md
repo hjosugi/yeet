@@ -145,8 +145,9 @@ public global-drag hook either. The portable answer:
   Two surfaces (rather than resizing one mid-drag) so the active drag simply
   crosses from strip → shelf; surface-resize-during-drag is compositor
   minefield territory. **[Spike S1: validate on sway/Hyprland/KWin.]**
-- **Global shortcut:** compositor keybinding invoking `yeet --toggle` over the
-  single-instance IPC. This is deterministic across portals and desktops.
+- **Global shortcut:** `org.freedesktop.portal.GlobalShortcuts` registers the
+  toggle binding on Wayland. If the portal or backend is unavailable, a
+  compositor keybinding invokes `yeet --toggle` over the single-instance IPC.
 - **GNOME fallback:** GNOME Shell rejects third-party layer-shell. Fallback
   mode = no strip; summon via shortcut/CLI; shelf is a normal
   always-on-top-requested window. Documented limitation.
@@ -165,6 +166,8 @@ public global-drag hook either. The portable answer:
   reapplied whenever the shelf is mapped.
 - **Hotkey:** Ctrl+Alt+Y via `RegisterHotKey`; a quick double press captures
   the clipboard.
+- **Tray:** a native notification-area menu exposes show/hide, clipboard
+  capture, clear, settings and quit; Linux uses StatusNotifierItem.
 - **DPI:** per-monitor v2 manifest; multi-monitor strip placement.
 - **Drag out:** GDK → OLE; verify copy/move against Explorer,
   browsers, Office. **[Spike S2: drags from/to elevated apps are blocked by
@@ -187,19 +190,20 @@ forward their command line to the primary instance.
   restored on launch; snippet temp files live in an app-owned dir and are
   garbage-collected when their item is removed.
 - Settings: atomically serialized Rust settings plus a GTK dialog. Keys:
-  strip size, autostart, theme, restore-on-launch and auto-hide (default **on**).
+  screen edge, strip size, disabled outputs, autostart, theme, language,
+  reduced motion, restore-on-launch and auto-hide (default **on**).
 
 ## 7. Packaging
 
 | Target | Artifact |
 |---|---|
-| Arch | AUR-ready `wayland-yeet` PKGBUILD in-repo |
+| Arch | AUR-ready `yeet-shelf` and `yeet-shelf-git` PKGBUILDs in-repo |
 | Any Linux | Flatpak `io.github.hjosugi.Yeet` (Flathub); note: layer-shell OK in Flatpak |
 | Nix | in-repo derivation |
 | Windows | Inno Setup installer + portable zip; winget metadata after signing |
 | CI | GitHub Actions: Linux + Windows build on PR; artifacts on tag |
 
-Binary name `yeet`; distribution package names use `wayland-yeet` to avoid
+Binary name `yeet`; the Arch package name is `yeet-shelf` to avoid
 collisions with unrelated tools.
 
 ## 8. Testing

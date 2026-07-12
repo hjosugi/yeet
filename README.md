@@ -1,5 +1,7 @@
 # Yeet
 
+[![CI](https://github.com/hjosugi/wayland-yeet/actions/workflows/ci.yml/badge.svg)](https://github.com/hjosugi/wayland-yeet/actions/workflows/ci.yml)
+
 **A Yoink-style drag-and-drop shelf for Wayland and Windows.**
 
 Yeet gives you a temporary "shelf" for files while you drag them around.
@@ -7,7 +9,9 @@ Drag files onto the shelf, navigate freely to the destination with your
 hands off the mouse button, then drag them back out. When the last item
 leaves the shelf, it disappears.
 
-> Status: **0.2 native rewrite release**. The current build has the core shelf,
+![Yeet shelf holding two files](docs/screenshots/yeet-linux-dark.png)
+
+> Status: **0.3 native release**. The current build has the core shelf,
 > file/text drop-in, multi-item drag-out, pinning, persistence, single-instance
 > CLI forwarding, multi-monitor edge strips and Wayland layer-shell/fallback
 > paths. See [the test matrix](docs/compositors.md) for verification status.
@@ -38,7 +42,7 @@ Wayland first, with Windows kept in the same codebase.
 |---|---|---|
 | Edge trigger | `zwlr_layer_shell_v1` via `gtk4-layer-shell` | topmost frameless OLE drop-target strip |
 | Shelf window | layer-shell overlay surface | frameless topmost tool window |
-| Global shortcut | compositor binding to `yeet --toggle` | Ctrl+Alt+Y via `RegisterHotKey` |
+| Global shortcut | XDG GlobalShortcuts portal, with `yeet --toggle` fallback | Ctrl+Alt+Y via `RegisterHotKey` |
 | Drag in/out | `wl_data_device` (via GTK/GDK) | OLE (via GTK/GDK) |
 | Fallback | regular window mode (GNOME) | — |
 
@@ -56,10 +60,61 @@ Wayland first, with Windows kept in the same codebase.
   reapplies `HWND_TOPMOST` whenever the shelf is shown.
 - Clipboard capture, image/text preview, context actions, persistent settings,
   configurable edge width and per-user autostart.
+- Full keyboard navigation and GTK accessibility metadata, English/Japanese UI,
+  reduced-motion support, and a Linux/Windows tray menu.
 
-## Building
+## Install on Linux
 
-Requires Rust ≥ 1.92, GTK ≥ 4.8 and, on Wayland,
+Download the current release archive and install it under `/usr/local`:
+
+```sh
+version=0.3.0
+base="https://github.com/hjosugi/wayland-yeet/releases/download/v${version}"
+curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
+curl -fLO "$base/SHA256SUMS-linux.txt"
+grep "yeet-${version}-linux-x86_64.tar.gz" SHA256SUMS-linux.txt | sha256sum -c -
+tar -xzf "yeet-${version}-linux-x86_64.tar.gz"
+root="yeet-${version}-linux-x86_64"
+sudo cp -a "$root/bin/." /usr/local/bin/
+sudo cp -a "$root/share/." /usr/local/share/
+yeet --hidden
+```
+
+Install the GTK runtime first:
+
+```sh
+# Arch Linux
+sudo pacman -S gtk4 gtk4-layer-shell
+
+# Fedora
+sudo dnf install gtk4 gtk4-layer-shell
+
+# Ubuntu 25.10 or newer
+sudo apt install libgtk-4-1 libgtk4-layer-shell0
+```
+
+Ubuntu 24.04 has GTK 4 but no `gtk4-layer-shell` package. Install the pinned
+upstream library used by CI before running Yeet:
+
+```sh
+sudo apt update
+sudo apt install libgtk-4-dev libwayland-dev wayland-protocols meson ninja-build
+git clone --depth 1 --branch v1.3.0 https://github.com/wmww/gtk4-layer-shell.git /tmp/gtk4-layer-shell
+meson setup /tmp/gtk4-layer-shell/build /tmp/gtk4-layer-shell \
+  --prefix=/usr/local -Dexamples=false -Ddocs=false -Dtests=false \
+  -Dintrospection=false -Dvapi=false
+ninja -C /tmp/gtk4-layer-shell/build
+sudo ninja -C /tmp/gtk4-layer-shell/build install
+sudo ldconfig
+```
+
+The release archive currently targets x86-64. Arch users can alternatively
+build `packaging/arch/PKGBUILD`; Nix users can run
+`nix run github:hjosugi/wayland-yeet`.
+
+## Build from source
+
+Requires Rust ≥ 1.92, GTK ≥ 4.10 and, on Wayland,
 `gtk4-layer-shell`. Install the development packages provided by your
 distribution. Ubuntu 24.04 does not package the GTK4 version of layer-shell;
 the CI workflow shows the pinned upstream source-build commands used there.
@@ -74,6 +129,9 @@ At runtime Yeet checks whether layer-shell is supported. If it is unavailable,
 the shelf uses a regular window and no edge strip is created. Bind
 `yeet --toggle` in the compositor configuration for that fallback. Windows
 builds use the UCRT64 GTK package in MSYS2; CI contains the exact setup.
+
+PDF previews use `pdftoppm` when Poppler is installed and otherwise open in
+the system's default PDF application.
 
 See [Wayland compositor verification](docs/compositors.md) and
 [Windows behavior and limitations](docs/windows.md) before filing a

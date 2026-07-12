@@ -1,4 +1,5 @@
 use crate::platform;
+use crate::services::{DesktopAction, DesktopServices};
 use directories::ProjectDirs;
 use gio::prelude::*;
 use glib::types::StaticType;
@@ -6,13 +7,19 @@ use glib::value::ToValue;
 use gtk::gdk;
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+use uuid::Uuid;
+use wayland_yeet::i18n::{Language, set_language, tr};
 use wayland_yeet::model::ShelfModel;
-use wayland_yeet::settings::{Settings, Theme};
+use wayland_yeet::settings::{ScreenEdge, Settings, Theme};
+
+thread_local! {
+    static THUMBNAIL_CACHE: RefCell<HashMap<PathBuf, gdk::Texture>> = RefCell::new(HashMap::new());
+}
 
 pub struct Ui {
     _hold: gio::ApplicationHoldGuard,
@@ -22,14 +29,24 @@ pub struct Ui {
     shelf: gtk::ApplicationWindow,
     list: gtk::ListBox,
     count: gtk::Label,
+    empty: gtk::Label,
+    mode_label: gtk::Label,
+    hide_button: gtk::Button,
+    clear_button: gtk::Button,
+    clipboard_button: gtk::Button,
+    preferences_button: gtk::Button,
+    revealer: gtk::Revealer,
     edges: RefCell<Vec<gtk::Window>>,
     selected: RefCell<HashSet<PathBuf>>,
+    desktop_services: RefCell<Option<DesktopServices>>,
+    drag_active: Cell<bool>,
 }
 
 impl Ui {
     pub fn new(app: &gtk::Application) -> Rc<Self> {
         install_css();
         let settings = Settings::load();
+        set_language(settings.language);
         apply_theme(settings.theme);
         // Yeet owns always-available edge drop targets even while its shelf is
         // hidden, so the primary instance must not exit with no mapped shelf.
@@ -44,7 +61,12 @@ impl Ui {
             .resizable(true)
             .build();
         shelf.add_css_class("yeet-shelf");
-        platform::configure_shelf(&shelf);
+        shelf.set_accessible_role(gtk::AccessibleRole::Dialog);
+        shelf.update_property(&[
+            gtk::accessible::Property::Label(tr("shelf_title")),
+            gtk::accessible::Property::Description(tr("shelf_description")),
+        ]);
+        platform::configure_shelf(&shelf, settings.edge);
 
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 8);
         outer.set_margin_top(12);
@@ -53,14 +75,27 @@ impl Ui {
         outer.set_margin_end(12);
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        header.set_accessible_role(gtk::AccessibleRole::Banner);
+        header.update_property(&[
+            gtk::accessible::Property::Label("Drag all shelf items"),
+            gtk::accessible::Property::Description(
+                "Drag this header to move the complete stack as one group.",
+            ),
+        ]);
+        let stack_icon = gtk::Image::from_icon_name("view-grid-symbolic");
+        stack_icon.set_pixel_size(20);
         let title = gtk::Label::new(Some("YEET"));
         title.add_css_class("title");
         title.set_hexpand(true);
         title.set_halign(gtk::Align::Start);
         let count = gtk::Label::new(Some("0"));
         count.add_css_class("dim-label");
+        count.set_accessible_role(gtk::AccessibleRole::Status);
+        count.update_property(&[gtk::accessible::Property::Label("0 items on the shelf")]);
         let hide = gtk::Button::from_icon_name("window-minimize-symbolic");
         hide.add_css_class("flat");
+        set_button_accessibility(&hide, tr("hide_shelf"), "Escape");
+        header.append(&stack_icon);
         header.append(&title);
         header.append(&count);
         header.append(&hide);
@@ -68,8 +103,17 @@ impl Ui {
 
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::Multiple);
+        list.set_focusable(true);
+        list.set_accessible_role(gtk::AccessibleRole::ListBox);
+        list.update_property(&[
+            gtk::accessible::Property::Label(tr("shelf_items")),
+            gtk::accessible::Property::Description(tr("shelf_items_help")),
+            gtk::accessible::Property::MultiSelectable(true),
+            gtk::accessible::Property::Orientation(gtk::Orientation::Vertical),
+        ]);
         list.add_css_class("boxed-list");
-        let empty = gtk::Label::new(Some("Drop files or text here"));
+        let empty = gtk::Label::new(Some(tr("drop_here")));
+        empty.update_property(&[gtk::accessible::Property::Label(tr("empty_help"))]);
         empty.set_margin_top(60);
         empty.set_margin_bottom(60);
         list.set_placeholder(Some(&empty));
@@ -81,12 +125,14 @@ impl Ui {
         outer.append(&scroll);
 
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        footer.set_accessible_role(gtk::AccessibleRole::Toolbar);
+        footer.update_property(&[gtk::accessible::Property::Label(tr("shelf_actions"))]);
         let mode = if platform::layer_shell_supported() {
-            "Wayland layer shell"
+            tr("wayland_mode")
         } else if cfg!(target_os = "windows") {
-            "Windows native"
+            tr("windows_mode")
         } else {
-            "Fallback window"
+            tr("fallback_mode")
         };
         let mode_label = gtk::Label::new(Some(mode));
         mode_label.add_css_class("dim-label");
@@ -94,19 +140,32 @@ impl Ui {
         mode_label.set_halign(gtk::Align::Start);
         let clear = gtk::Button::from_icon_name("edit-clear-all-symbolic");
         clear.add_css_class("flat");
-        clear.set_tooltip_text(Some("Remove all unpinned items"));
+        clear.set_tooltip_text(Some(tr("clear_unpinned")));
+        set_button_accessibility(&clear, tr("clear_unpinned"), "");
         let clipboard = gtk::Button::from_icon_name("edit-paste-symbolic");
         clipboard.add_css_class("flat");
-        clipboard.set_tooltip_text(Some("Capture clipboard"));
+        clipboard.set_tooltip_text(Some(tr("capture_clipboard")));
+        set_button_accessibility(&clipboard, tr("capture_clipboard"), "Ctrl+Alt+Y twice");
         let preferences = gtk::Button::from_icon_name("emblem-system-symbolic");
         preferences.add_css_class("flat");
-        preferences.set_tooltip_text(Some("Settings"));
+        preferences.set_tooltip_text(Some(tr("settings")));
+        set_button_accessibility(&preferences, tr("settings"), "");
         footer.append(&mode_label);
         footer.append(&clipboard);
         footer.append(&preferences);
         footer.append(&clear);
         outer.append(&footer);
-        shelf.set_child(Some(&outer));
+        let revealer = gtk::Revealer::builder()
+            .child(&outer)
+            .reveal_child(true)
+            .transition_type(if settings.edge == ScreenEdge::Right {
+                gtk::RevealerTransitionType::SlideLeft
+            } else {
+                gtk::RevealerTransitionType::SlideRight
+            })
+            .transition_duration(if settings.reduced_motion { 0 } else { 180 })
+            .build();
+        shelf.set_child(Some(&revealer));
 
         let state_path = ProjectDirs::from("io", "hjosugi", "Yeet")
             .map(|dirs| dirs.data_local_dir().join("shelf.json"))
@@ -127,8 +186,17 @@ impl Ui {
             shelf,
             list,
             count,
+            empty: empty.clone(),
+            mode_label: mode_label.clone(),
+            hide_button: hide.clone(),
+            clear_button: clear.clone(),
+            clipboard_button: clipboard.clone(),
+            preferences_button: preferences.clone(),
+            revealer,
             edges: RefCell::new(Vec::new()),
             selected: RefCell::new(HashSet::new()),
+            desktop_services: RefCell::new(None),
+            drag_active: Cell::new(false),
         });
 
         {
@@ -138,12 +206,7 @@ impl Ui {
         {
             let ui = ui.clone();
             clear.connect_clicked(move |_| {
-                if let Err(error) = ui.model.borrow_mut().clear_unpinned() {
-                    eprintln!("yeet: {error:#}");
-                }
-                ui.selected.borrow_mut().clear();
-                ui.refresh();
-                ui.hide_if_empty();
+                ui.clear_unpinned();
             });
         }
         {
@@ -174,6 +237,7 @@ impl Ui {
                         selected.insert(item.path.clone());
                     }
                 }
+                update_selection_accessibility(list);
             });
         }
         add_drag_source(&header, &ui, None);
@@ -207,6 +271,23 @@ impl Ui {
                     }
                 }
             });
+        }
+        {
+            let weak = Rc::downgrade(&ui);
+            let services = DesktopServices::install(move |action| {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match action {
+                    DesktopAction::Toggle => ui.toggle(),
+                    DesktopAction::Clear => ui.clear_unpinned(),
+                    DesktopAction::Settings => ui.show_settings(),
+                    DesktopAction::CaptureClipboard => ui.capture_clipboard(),
+                    DesktopAction::Quit => ui.app.quit(),
+                }
+            });
+            services.update_count(ui.model.borrow().items().len());
+            *ui.desktop_services.borrow_mut() = Some(services);
         }
         ui
     }
@@ -264,6 +345,15 @@ impl Ui {
             else {
                 continue;
             };
+            if monitor.connector().is_some_and(|connector| {
+                self.settings
+                    .borrow()
+                    .disabled_outputs
+                    .iter()
+                    .any(|disabled| disabled == connector.as_str())
+            }) {
+                continue;
+            }
             let edge = gtk::Window::builder()
                 .application(app)
                 .title("Yeet edge")
@@ -273,7 +363,7 @@ impl Ui {
                 .build();
             edge.add_css_class("yeet-edge");
             let strip_size = self.settings.borrow().strip_size;
-            platform::configure_edge(&edge, &monitor, strip_size);
+            platform::configure_edge(&edge, &monitor, strip_size, self.settings.borrow().edge);
             attach_drop_target(&edge, self, true, Some(monitor));
             edge.set_visible(true);
             edges.push(edge);
@@ -281,14 +371,29 @@ impl Ui {
     }
 
     fn refresh(self: &Rc<Self>) {
+        let focused_path = self.focused_path();
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
         let items = self.model.borrow().items().to_vec();
         let selected_snapshot = self.selected.borrow().clone();
         self.count.set_text(&items.len().to_string());
-        for item in items {
+        if let Some(services) = self.desktop_services.borrow().as_ref() {
+            services.update_count(items.len());
+        }
+        let count_description = format!(
+            "{} {} on the shelf",
+            items.len(),
+            if items.len() == 1 { "item" } else { "items" }
+        );
+        self.count
+            .update_property(&[gtk::accessible::Property::Label(&count_description)]);
+        let item_count = items.len();
+        for (index, item) in items.into_iter().enumerate() {
             let row = gtk::ListBoxRow::new();
+            row.set_focusable(true);
+            row.set_activatable(true);
+            row.set_accessible_role(gtk::AccessibleRole::Option);
             let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             content.set_margin_top(7);
             content.set_margin_bottom(7);
@@ -306,16 +411,46 @@ impl Ui {
                 "window-pin-symbolic"
             });
             pin.add_css_class("flat");
+            set_button_accessibility(
+                &pin,
+                if item.pinned {
+                    tr("unpin_item")
+                } else {
+                    tr("pin_item")
+                },
+                "",
+            );
             let preview = gtk::Button::from_icon_name("document-open-symbolic");
             preview.add_css_class("flat");
+            set_button_accessibility(&preview, tr("preview_item"), "Space or Enter");
             let remove = gtk::Button::from_icon_name("window-close-symbolic");
             remove.add_css_class("flat");
+            set_button_accessibility(&remove, tr("remove_item"), "Delete");
             content.append(&icon);
             content.append(&name);
             content.append(&preview);
             content.append(&pin);
             content.append(&remove);
             row.set_child(Some(&content));
+            let accessible_name = if item.pinned {
+                format!("{}, pinned", item.display_name())
+            } else {
+                item.display_name()
+            };
+            let accessible_description = format!(
+                "{}. Space or Enter previews, Ctrl+C copies, and Delete removes this item.",
+                item.path.display()
+            );
+            row.update_property(&[
+                gtk::accessible::Property::Label(&accessible_name),
+                gtk::accessible::Property::Description(&accessible_description),
+                gtk::accessible::Property::KeyShortcuts("Space Enter Ctrl+C Delete"),
+            ]);
+            row.update_relation(&[
+                gtk::accessible::Relation::PosInSet((index + 1) as i32),
+                gtk::accessible::Relation::SetSize(item_count as i32),
+            ]);
+            self.list.append(&row);
             if selected_snapshot.contains(&item.path) {
                 self.list.select_row(Some(&row));
             }
@@ -366,19 +501,54 @@ impl Ui {
             }
             attach_context_menu(&content, self, item.path.clone());
             add_drag_source(&content, self, Some(item.path));
-            self.list.append(&row);
+        }
+        update_selection_accessibility(&self.list);
+        if self.shelf.is_visible() {
+            let focus_index = focused_path
+                .as_ref()
+                .and_then(|path| {
+                    self.model
+                        .borrow()
+                        .items()
+                        .iter()
+                        .position(|item| &item.path == path)
+                })
+                .or_else(|| self.first_selected_index())
+                .unwrap_or(0);
+            if selected_snapshot.is_empty() {
+                self.focus_row(focus_index, false);
+            } else {
+                self.focus_row_without_selection(focus_index);
+            }
         }
     }
 
     fn show(&self, monitor: Option<&gdk::Monitor>) {
         if let Some(monitor) = monitor {
-            platform::set_shelf_monitor(&self.shelf, monitor);
+            platform::set_shelf_monitor(&self.shelf, monitor, self.settings.borrow().edge);
         }
         self.shelf.set_visible(true);
+        self.revealer.set_reveal_child(true);
+        if let Some(index) = self.first_selected_index() {
+            self.focus_row_without_selection(index);
+        } else {
+            self.focus_row(0, false);
+        }
     }
 
     fn hide(&self) {
-        self.shelf.set_visible(false);
+        if self.settings.borrow().reduced_motion {
+            self.shelf.set_visible(false);
+            return;
+        }
+        self.revealer.set_reveal_child(false);
+        let shelf = self.shelf.clone();
+        let revealer = self.revealer.clone();
+        glib::timeout_add_local_once(Duration::from_millis(190), move || {
+            if !revealer.reveals_child() {
+                shelf.set_visible(false);
+            }
+        });
     }
 
     fn toggle(&self) {
@@ -390,13 +560,21 @@ impl Ui {
     }
 
     fn hide_if_empty(&self) {
-        if self.settings.borrow().auto_hide && self.model.borrow().items().is_empty() {
+        if self.settings.borrow().auto_hide
+            && self.model.borrow().items().is_empty()
+            && !self.drag_active.get()
+        {
             self.hide();
         }
     }
 
     fn remove_selected(self: &Rc<Self>) {
-        let paths: Vec<PathBuf> = self.selected.borrow().iter().cloned().collect();
+        let mut paths = self.selected_paths();
+        if paths.is_empty()
+            && let Some(path) = self.focused_path()
+        {
+            paths.push(path);
+        }
         let mut indices: Vec<usize> = self
             .model
             .borrow()
@@ -405,6 +583,7 @@ impl Ui {
             .enumerate()
             .filter_map(|(index, item)| paths.contains(&item.path).then_some(index))
             .collect();
+        let next_focus = indices.iter().min().copied().unwrap_or(0);
         indices.sort_unstable_by(|a, b| b.cmp(a));
         for index in indices {
             if let Err(error) = self.model.borrow_mut().remove(index) {
@@ -413,7 +592,120 @@ impl Ui {
         }
         self.selected.borrow_mut().clear();
         self.refresh();
+        self.focus_row(next_focus, false);
         self.hide_if_empty();
+    }
+
+    fn clear_unpinned(self: &Rc<Self>) {
+        if let Err(error) = self.model.borrow_mut().clear_unpinned() {
+            eprintln!("yeet: {error:#}");
+        }
+        self.selected.borrow_mut().clear();
+        self.refresh();
+        self.hide_if_empty();
+    }
+
+    fn copy_selected(&self) {
+        let mut paths = self.selected_paths();
+        if paths.is_empty()
+            && let Some(path) = self.focused_path()
+        {
+            paths.push(path);
+        }
+        if paths.is_empty() {
+            return;
+        }
+        let Some(display) = gdk::Display::default() else {
+            return;
+        };
+        let files: Vec<gio::File> = paths.iter().map(gio::File::for_path).collect();
+        let file_list = gdk::FileList::from_array(&files);
+        let file_provider = gdk::ContentProvider::for_value(&file_list.to_value());
+        let text = paths_as_text(&paths);
+        let text_provider = gdk::ContentProvider::for_value(&text.to_value());
+        let provider = gdk::ContentProvider::new_union(&[file_provider, text_provider]);
+        if let Err(error) = display.clipboard().set_content(Some(&provider)) {
+            eprintln!("yeet: copy failed: {error}");
+        }
+    }
+
+    fn selected_paths(&self) -> Vec<PathBuf> {
+        let selected = self.selected.borrow();
+        self.model
+            .borrow()
+            .items()
+            .iter()
+            .filter(|item| selected.contains(&item.path))
+            .map(|item| item.path.clone())
+            .collect()
+    }
+
+    fn first_selected_index(&self) -> Option<usize> {
+        self.list
+            .selected_rows()
+            .into_iter()
+            .map(|row| row.index() as usize)
+            .min()
+    }
+
+    fn focused_row_index(&self) -> Option<usize> {
+        let focus = gtk::prelude::GtkWindowExt::focus(&self.shelf)?;
+        if let Ok(row) = focus.clone().downcast::<gtk::ListBoxRow>() {
+            return usize::try_from(row.index()).ok();
+        }
+        focus
+            .ancestor(gtk::ListBoxRow::static_type())
+            .and_then(|widget| widget.downcast::<gtk::ListBoxRow>().ok())
+            .and_then(|row| usize::try_from(row.index()).ok())
+    }
+
+    fn focused_path(&self) -> Option<PathBuf> {
+        self.focused_row_index().and_then(|index| {
+            self.model
+                .borrow()
+                .items()
+                .get(index)
+                .map(|item| item.path.clone())
+        })
+    }
+
+    fn focus_row(&self, index: usize, extend_selection: bool) {
+        let Some(row) = self.list.row_at_index(index as i32) else {
+            self.list.grab_focus();
+            return;
+        };
+        if !extend_selection {
+            self.list.unselect_all();
+        }
+        self.list.select_row(Some(&row));
+        row.grab_focus();
+    }
+
+    fn focus_row_without_selection(&self, index: usize) {
+        if let Some(row) = self.list.row_at_index(index as i32) {
+            row.grab_focus();
+        } else {
+            self.list.grab_focus();
+        }
+    }
+
+    fn navigate_items(&self, navigation: Navigation, extend_selection: bool) {
+        let item_count = self.model.borrow().items().len();
+        let current = self
+            .focused_row_index()
+            .or_else(|| self.first_selected_index());
+        if let Some(index) = navigation_target(current, item_count, navigation) {
+            self.focus_row(index, extend_selection);
+        }
+    }
+
+    fn preview_selected(&self) {
+        let path = self
+            .focused_path()
+            .or_else(|| self.selected_paths().into_iter().next());
+        if let Some(path) = path {
+            self.preview_path(&path);
+        }
     }
 
     fn preview_path(&self, path: &Path) {
@@ -421,6 +713,7 @@ impl Ui {
             let picture = gtk::Picture::for_filename(path);
             picture.set_can_shrink(true);
             picture.set_content_fit(gtk::ContentFit::Contain);
+            picture.update_property(&[gtk::accessible::Property::Label("Image preview")]);
             let window = gtk::Window::builder()
                 .title(
                     path.file_name()
@@ -432,6 +725,33 @@ impl Ui {
                 .transient_for(&self.shelf)
                 .child(&picture)
                 .build();
+            configure_preview_window(&window);
+            window.present();
+            return;
+        }
+        if is_pdf(path)
+            && let Some(preview) = render_pdf_first_page(path)
+        {
+            let picture = gtk::Picture::for_filename(&preview);
+            picture.set_can_shrink(true);
+            picture.set_content_fit(gtk::ContentFit::Contain);
+            picture.update_property(&[gtk::accessible::Property::Label("PDF first-page preview")]);
+            let window = gtk::Window::builder()
+                .title(
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or(tr("preview")),
+                )
+                .default_width(720)
+                .default_height(520)
+                .transient_for(&self.shelf)
+                .child(&picture)
+                .build();
+            window.connect_close_request(move |_| {
+                let _ = fs::remove_file(&preview);
+                glib::Propagation::Proceed
+            });
+            configure_preview_window(&window);
             window.present();
             return;
         }
@@ -449,6 +769,11 @@ impl Ui {
                     view.set_cursor_visible(false);
                     view.set_wrap_mode(gtk::WrapMode::WordChar);
                     view.buffer().set_text(&text);
+                    view.update_property(&[
+                        gtk::accessible::Property::Label("Text preview"),
+                        gtk::accessible::Property::ReadOnly(true),
+                        gtk::accessible::Property::MultiLine(true),
+                    ]);
                     let scroll = gtk::ScrolledWindow::builder()
                         .min_content_width(640)
                         .min_content_height(480)
@@ -465,6 +790,7 @@ impl Ui {
                         .transient_for(&self.shelf)
                         .child(&scroll)
                         .build();
+                    configure_preview_window(&window);
                     window.present();
                 }
                 Err(error) => eprintln!("yeet: preview failed: {error}"),
@@ -482,11 +808,51 @@ impl Ui {
         });
     }
 
+    fn apply_language(&self) {
+        self.shelf.update_property(&[
+            gtk::accessible::Property::Label(tr("shelf_title")),
+            gtk::accessible::Property::Description(tr("shelf_description")),
+        ]);
+        self.list.update_property(&[
+            gtk::accessible::Property::Label(tr("shelf_items")),
+            gtk::accessible::Property::Description(tr("shelf_items_help")),
+        ]);
+        self.empty.set_text(tr("drop_here"));
+        self.empty
+            .update_property(&[gtk::accessible::Property::Label(tr("empty_help"))]);
+        self.mode_label
+            .set_text(if platform::layer_shell_supported() {
+                tr("wayland_mode")
+            } else if cfg!(target_os = "windows") {
+                tr("windows_mode")
+            } else {
+                tr("fallback_mode")
+            });
+        self.clear_button
+            .set_tooltip_text(Some(tr("clear_unpinned")));
+        self.clipboard_button
+            .set_tooltip_text(Some(tr("capture_clipboard")));
+        self.preferences_button
+            .set_tooltip_text(Some(tr("settings")));
+        set_button_accessibility(&self.hide_button, tr("hide_shelf"), "Escape");
+        set_button_accessibility(&self.clear_button, tr("clear_unpinned"), "");
+        set_button_accessibility(
+            &self.clipboard_button,
+            tr("capture_clipboard"),
+            "Ctrl+Alt+Y twice",
+        );
+        set_button_accessibility(&self.preferences_button, tr("settings"), "");
+    }
+
     fn capture_clipboard(self: &Rc<Self>) {
         let Some(display) = gdk::Display::default() else {
             return;
         };
         let clipboard = display.clipboard();
+        if clipboard_is_sensitive(&clipboard) {
+            eprintln!("yeet: clipboard capture skipped because the source marked it as sensitive");
+            return;
+        }
         let ui = self.clone();
         glib::spawn_future_local(async move {
             if let Ok(value) = clipboard
@@ -507,7 +873,7 @@ impl Ui {
                 && ui
                     .model
                     .borrow_mut()
-                    .add_managed_path(path, "Clipboard image".to_owned())
+                    .add_managed_path(path, tr("clipboard_image").to_owned())
                     .unwrap_or(false)
             {
                 ui.refresh();
@@ -525,7 +891,7 @@ impl Ui {
 
     fn show_settings(self: &Rc<Self>) {
         let window = gtk::Window::builder()
-            .title("Yeet Settings")
+            .title(tr("settings_title"))
             .default_width(380)
             .resizable(false)
             .transient_for(&self.shelf)
@@ -547,17 +913,39 @@ impl Ui {
         let autostart = gtk::Switch::builder().active(settings.autostart).build();
         let strip = gtk::SpinButton::with_range(3.0, 16.0, 1.0);
         strip.set_value(settings.strip_size.into());
-        let theme = gtk::DropDown::from_strings(&["System", "Light", "Dark"]);
+        let theme = gtk::DropDown::from_strings(&[tr("system"), tr("light"), tr("dark")]);
         theme.set_selected(match settings.theme {
             Theme::System => 0,
             Theme::Light => 1,
             Theme::Dark => 2,
         });
-        add_setting_row(&grid, 0, "Hide when empty", &auto_hide);
-        add_setting_row(&grid, 1, "Restore shelf at launch", &restore);
-        add_setting_row(&grid, 2, "Start with the session", &autostart);
-        add_setting_row(&grid, 3, "Edge width", &strip);
-        add_setting_row(&grid, 4, "Theme", &theme);
+        let language = gtk::DropDown::from_strings(&[tr("system"), tr("english"), tr("japanese")]);
+        language.set_selected(match settings.language {
+            Language::System => 0,
+            Language::English => 1,
+            Language::Japanese => 2,
+        });
+        let reduced_motion = gtk::Switch::builder()
+            .active(settings.reduced_motion)
+            .build();
+        let edge = gtk::DropDown::from_strings(&[tr("left"), tr("right")]);
+        edge.set_selected(if settings.edge == ScreenEdge::Left {
+            0
+        } else {
+            1
+        });
+        let disabled_outputs = gtk::Entry::new();
+        disabled_outputs.set_text(&settings.disabled_outputs.join(", "));
+        disabled_outputs.set_placeholder_text(Some("DP-1, HDMI-A-1"));
+        add_setting_row(&grid, 0, tr("hide_when_empty"), &auto_hide);
+        add_setting_row(&grid, 1, tr("restore_shelf"), &restore);
+        add_setting_row(&grid, 2, tr("start_session"), &autostart);
+        add_setting_row(&grid, 3, tr("edge_width"), &strip);
+        add_setting_row(&grid, 4, tr("theme"), &theme);
+        add_setting_row(&grid, 5, tr("language"), &language);
+        add_setting_row(&grid, 6, tr("reduced_motion"), &reduced_motion);
+        add_setting_row(&grid, 7, tr("screen_edge"), &edge);
+        add_setting_row(&grid, 8, tr("disabled_outputs"), &disabled_outputs);
         window.set_child(Some(&grid));
 
         connect_setting(&auto_hide, self, |settings, value| {
@@ -566,6 +954,16 @@ impl Ui {
         connect_setting(&restore, self, |settings, value| {
             settings.restore_shelf = value
         });
+        {
+            let ui = self.clone();
+            reduced_motion.connect_active_notify(move |switch| {
+                let reduced = switch.is_active();
+                ui.settings.borrow_mut().reduced_motion = reduced;
+                ui.revealer
+                    .set_transition_duration(if reduced { 0 } else { 180 });
+                ui.save_settings();
+            });
+        }
         {
             let ui = self.clone();
             autostart.connect_active_notify(move |switch| {
@@ -589,6 +987,40 @@ impl Ui {
         }
         {
             let ui = self.clone();
+            edge.connect_selected_notify(move |dropdown| {
+                ui.settings.borrow_mut().edge = if dropdown.selected() == 0 {
+                    ScreenEdge::Left
+                } else {
+                    ScreenEdge::Right
+                };
+                ui.revealer.set_transition_type(
+                    if ui.settings.borrow().edge == ScreenEdge::Right {
+                        gtk::RevealerTransitionType::SlideLeft
+                    } else {
+                        gtk::RevealerTransitionType::SlideRight
+                    },
+                );
+                ui.save_settings();
+                platform::configure_shelf(&ui.shelf, ui.settings.borrow().edge);
+                ui.rebuild_edges(&ui.app);
+            });
+        }
+        {
+            let ui = self.clone();
+            disabled_outputs.connect_changed(move |entry| {
+                ui.settings.borrow_mut().disabled_outputs = entry
+                    .text()
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect();
+                ui.save_settings();
+                ui.rebuild_edges(&ui.app);
+            });
+        }
+        {
+            let ui = self.clone();
             theme.connect_selected_notify(move |dropdown| {
                 let value = match dropdown.selected() {
                     1 => Theme::Light,
@@ -598,6 +1030,27 @@ impl Ui {
                 ui.settings.borrow_mut().theme = value;
                 apply_theme(value);
                 ui.save_settings();
+            });
+        }
+        {
+            let ui = self.clone();
+            let window = window.clone();
+            language.connect_selected_notify(move |dropdown| {
+                let value = match dropdown.selected() {
+                    1 => Language::English,
+                    2 => Language::Japanese,
+                    _ => Language::System,
+                };
+                if ui.settings.borrow().language == value {
+                    return;
+                }
+                ui.settings.borrow_mut().language = value;
+                set_language(value);
+                ui.save_settings();
+                ui.apply_language();
+                ui.refresh();
+                window.close();
+                ui.show_settings();
             });
         }
         window.present();
@@ -631,6 +1084,7 @@ fn connect_setting(
 }
 
 fn apply_theme(theme: Theme) {
+    platform::set_theme(theme);
     let Some(settings) = gtk::Settings::default() else {
         return;
     };
@@ -680,8 +1134,21 @@ fn add_drag_source(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, source_path: Opt
             if files.is_empty() {
                 return None;
             }
+            ui.drag_active.set(true);
             let file_list = gdk::FileList::from_array(&files);
-            Some(gdk::ContentProvider::for_value(&file_list.to_value()))
+            let mut providers = vec![gdk::ContentProvider::for_value(&file_list.to_value())];
+            if let [path] = paths.as_slice() {
+                if is_text(path)
+                    && let Ok(text) = fs::read_to_string(path)
+                {
+                    providers.push(gdk::ContentProvider::for_value(&text.to_value()));
+                } else if is_image(path)
+                    && let Ok(texture) = gdk::Texture::from_filename(path)
+                {
+                    providers.push(gdk::ContentProvider::for_value(&texture.to_value()));
+                }
+            }
+            Some(gdk::ContentProvider::new_union(&providers))
         });
     }
     {
@@ -692,8 +1159,23 @@ fn add_drag_source(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, source_path: Opt
         });
     }
     {
+        let active_paths = active_paths.clone();
+        source.connect_drag_begin(move |_, drag| {
+            let icon = gtk::Image::from_icon_name("text-x-generic-symbolic");
+            icon.set_pixel_size(32);
+            let count = gtk::Label::new(Some(&active_paths.borrow().len().to_string()));
+            count.add_css_class("drag-count");
+            let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            content.add_css_class("drag-preview");
+            content.append(&icon);
+            content.append(&count);
+            gtk::DragIcon::for_drag(drag).set_child(Some(&content));
+        });
+    }
+    {
         let ui = ui.clone();
         source.connect_drag_end(move |_, drag, _delete_data| {
+            ui.drag_active.set(false);
             let accepted = !cancelled.get() && !drag.selected_action().is_empty();
             let paths = active_paths.borrow().clone();
             if accepted {
@@ -728,17 +1210,27 @@ fn attach_drop_target(
         String::static_type(),
         gdk::Texture::static_type(),
     ]);
-    if reveal_on_enter {
+    {
         let ui = ui.clone();
         let monitor = monitor.clone();
+        let drop_widget = widget.as_ref().clone();
         target.connect_enter(move |_, _, _| {
-            ui.show(monitor.as_ref());
+            drop_widget.add_css_class("drop-active");
+            if reveal_on_enter {
+                ui.show(monitor.as_ref());
+            }
             gdk::DragAction::COPY
         });
     }
     {
+        let drop_widget = widget.as_ref().clone();
+        target.connect_leave(move |_| drop_widget.remove_css_class("drop-active"));
+    }
+    {
         let ui = ui.clone();
+        let drop_widget = widget.as_ref().clone();
         target.connect_drop(move |_, value, _, _| {
+            drop_widget.remove_css_class("drop-active");
             let result = if let Ok(files) = value.get::<gdk::FileList>() {
                 let paths = files
                     .files()
@@ -747,8 +1239,20 @@ fn attach_drop_target(
                     .collect::<Vec<_>>();
                 ui.model.borrow_mut().add_paths(paths)
             } else if let Ok(text) = value.get::<String>() {
-                if text.starts_with("https://") || text.starts_with("http://") {
-                    ui.model.borrow_mut().add_remote_uri(&text).map(usize::from)
+                let file_paths: Vec<PathBuf> = text
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| line.starts_with("file://"))
+                    .filter_map(|uri| gio::File::for_uri(uri).path())
+                    .collect();
+                if !file_paths.is_empty() {
+                    ui.model.borrow_mut().add_paths(file_paths)
+                } else if text.trim().starts_with("https://") || text.trim().starts_with("http://")
+                {
+                    ui.model
+                        .borrow_mut()
+                        .add_remote_uri(text.trim())
+                        .map(usize::from)
                 } else {
                     ui.model.borrow_mut().add_text(&text).map(usize::from)
                 }
@@ -766,7 +1270,7 @@ fn attach_drop_target(
                 }
                 ui.model
                     .borrow_mut()
-                    .add_managed_path(path, "Image snippet".to_owned())
+                    .add_managed_path(path, tr("image_snippet").to_owned())
                     .map(usize::from)
             } else {
                 return false;
@@ -795,36 +1299,188 @@ fn install_keyboard(ui: &Rc<Ui>) {
     let keys = gtk::EventControllerKey::new();
     let ui_for_keys = ui.clone();
     keys.connect_key_pressed(move |_, key, _, modifiers| {
-        if key == gdk::Key::Escape {
-            ui_for_keys.hide();
-            return glib::Propagation::Stop;
-        }
-        if key == gdk::Key::Delete {
-            ui_for_keys.remove_selected();
-            return glib::Propagation::Stop;
-        }
-        if key == gdk::Key::space {
-            if let Some(path) = ui_for_keys.selected.borrow().iter().next().cloned() {
-                ui_for_keys.preview_path(&path);
+        let Some(action) = keyboard_action(key, modifiers) else {
+            return glib::Propagation::Proceed;
+        };
+        match action {
+            KeyboardAction::Hide => ui_for_keys.hide(),
+            KeyboardAction::Remove => ui_for_keys.remove_selected(),
+            KeyboardAction::Preview => ui_for_keys.preview_selected(),
+            KeyboardAction::Copy => ui_for_keys.copy_selected(),
+            KeyboardAction::SelectAll => {
+                ui_for_keys.list.select_all();
+                update_selection_accessibility(&ui_for_keys.list);
             }
-            return glib::Propagation::Stop;
+            KeyboardAction::Navigate(navigation) => ui_for_keys.navigate_items(
+                navigation,
+                modifiers.contains(gdk::ModifierType::SHIFT_MASK),
+            ),
         }
-        if modifiers.contains(gdk::ModifierType::CONTROL_MASK)
-            && matches!(key, gdk::Key::a | gdk::Key::A)
-        {
-            ui_for_keys.list.select_all();
-            return glib::Propagation::Stop;
-        }
-        glib::Propagation::Proceed
+        glib::Propagation::Stop
     });
     ui.shelf.add_controller(keys);
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Navigation {
+    Previous,
+    Next,
+    First,
+    Last,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum KeyboardAction {
+    Hide,
+    Remove,
+    Preview,
+    Copy,
+    SelectAll,
+    Navigate(Navigation),
+}
+
+fn keyboard_action(key: gdk::Key, modifiers: gdk::ModifierType) -> Option<KeyboardAction> {
+    let control = modifiers.contains(gdk::ModifierType::CONTROL_MASK);
+    if control && matches!(key, gdk::Key::a | gdk::Key::A) {
+        return Some(KeyboardAction::SelectAll);
+    }
+    if control && matches!(key, gdk::Key::c | gdk::Key::C) {
+        return Some(KeyboardAction::Copy);
+    }
+    if control
+        || modifiers.intersects(
+            gdk::ModifierType::ALT_MASK
+                | gdk::ModifierType::META_MASK
+                | gdk::ModifierType::SUPER_MASK,
+        )
+    {
+        return None;
+    }
+    match key {
+        gdk::Key::Escape => Some(KeyboardAction::Hide),
+        gdk::Key::Delete | gdk::Key::KP_Delete | gdk::Key::BackSpace => {
+            Some(KeyboardAction::Remove)
+        }
+        gdk::Key::space | gdk::Key::Return | gdk::Key::KP_Enter => Some(KeyboardAction::Preview),
+        gdk::Key::Up | gdk::Key::KP_Up => Some(KeyboardAction::Navigate(Navigation::Previous)),
+        gdk::Key::Down | gdk::Key::KP_Down => Some(KeyboardAction::Navigate(Navigation::Next)),
+        gdk::Key::Home | gdk::Key::KP_Home => Some(KeyboardAction::Navigate(Navigation::First)),
+        gdk::Key::End | gdk::Key::KP_End => Some(KeyboardAction::Navigate(Navigation::Last)),
+        _ => None,
+    }
+}
+
+fn navigation_target(
+    current: Option<usize>,
+    item_count: usize,
+    navigation: Navigation,
+) -> Option<usize> {
+    if item_count == 0 {
+        return None;
+    }
+    let last = item_count - 1;
+    Some(match navigation {
+        Navigation::Previous => current.unwrap_or(0).min(last).saturating_sub(1),
+        Navigation::Next => current.map_or(0, |index| index.saturating_add(1).min(last)),
+        Navigation::First => 0,
+        Navigation::Last => last,
+    })
+}
+
+fn paths_as_text(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|path| path.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn set_button_accessibility(button: &gtk::Button, label: &str, shortcuts: &str) {
+    button.set_accessible_role(gtk::AccessibleRole::Button);
+    if shortcuts.is_empty() {
+        button.update_property(&[gtk::accessible::Property::Label(label)]);
+    } else {
+        button.update_property(&[
+            gtk::accessible::Property::Label(label),
+            gtk::accessible::Property::KeyShortcuts(shortcuts),
+        ]);
+    }
+}
+
+fn configure_preview_window(window: &gtk::Window) {
+    window.set_accessible_role(gtk::AccessibleRole::Dialog);
+    window.update_property(&[
+        gtk::accessible::Property::Label("Item preview"),
+        gtk::accessible::Property::Description("Press Escape to close the preview."),
+        gtk::accessible::Property::KeyShortcuts("Escape"),
+    ]);
+    let keys = gtk::EventControllerKey::new();
+    let window_for_keys = window.clone();
+    keys.connect_key_pressed(move |_, key, _, _| {
+        if key == gdk::Key::Escape {
+            window_for_keys.close();
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
+    window.add_controller(keys);
+}
+
+fn update_selection_accessibility(list: &gtk::ListBox) {
+    let selected: HashSet<i32> = list
+        .selected_rows()
+        .into_iter()
+        .map(|row| row.index())
+        .collect();
+    let mut child = list.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if let Ok(row) = widget.downcast::<gtk::ListBoxRow>() {
+            row.update_state(&[gtk::accessible::State::Selected(Some(
+                selected.contains(&row.index()),
+            ))]);
+        }
+    }
+}
+
 fn item_icon(path: &Path) -> gtk::Widget {
     if is_image(path) {
-        let picture = gtk::Picture::for_filename(path);
+        let picture = gtk::Picture::new();
         picture.set_content_fit(gtk::ContentFit::Cover);
         picture.set_size_request(38, 38);
+        let path = path.to_path_buf();
+        if let Some(texture) = THUMBNAIL_CACHE.with(|cache| cache.borrow().get(&path).cloned()) {
+            picture.set_paintable(Some(&texture));
+        } else {
+            let file = gio::File::for_path(&path);
+            let within_cap = file
+                .query_info(
+                    "standard::size",
+                    gio::FileQueryInfoFlags::NONE,
+                    gio::Cancellable::NONE,
+                )
+                .is_ok_and(|info| info.size() <= 20 * 1024 * 1024);
+            if within_cap {
+                let picture = picture.clone();
+                glib::spawn_future_local(async move {
+                    let Ok((bytes, _)) = file.load_bytes_future().await else {
+                        return;
+                    };
+                    let Ok(texture) = gdk::Texture::from_bytes(&bytes) else {
+                        return;
+                    };
+                    picture.set_paintable(Some(&texture));
+                    THUMBNAIL_CACHE.with(|cache| {
+                        let mut cache = cache.borrow_mut();
+                        if cache.len() >= 128 {
+                            cache.clear();
+                        }
+                        cache.insert(path, texture);
+                    });
+                });
+            }
+        }
         return picture.upcast();
     }
     let file = gio::File::for_path(path);
@@ -853,11 +1509,12 @@ fn attach_context_menu(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, path: PathBu
     popover.set_has_arrow(true);
     popover.set_parent(widget);
     let menu = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    let open = gtk::Button::with_label("Open");
-    let reveal = gtk::Button::with_label("Reveal in file manager");
-    let copy = gtk::Button::with_label("Copy path");
-    let remove = gtk::Button::with_label("Remove");
-    for button in [&open, &reveal, &copy, &remove] {
+    let open = gtk::Button::with_label(tr("open"));
+    let reveal = gtk::Button::with_label(tr("reveal"));
+    let copy = gtk::Button::with_label(tr("copy_path"));
+    let remove = gtk::Button::with_label(tr("remove"));
+    let clear = gtk::Button::with_label(tr("clear_unpinned"));
+    for button in [&open, &reveal, &copy, &remove, &clear] {
         button.add_css_class("flat");
         menu.append(button);
     }
@@ -901,6 +1558,10 @@ fn attach_context_menu(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, path: PathBu
             ui.refresh();
             ui.hide_if_empty();
         });
+    }
+    {
+        let ui = ui.clone();
+        clear.connect_clicked(move |_| ui.clear_unpinned());
     }
     let click = gtk::GestureClick::new();
     click.set_button(gdk::BUTTON_SECONDARY);
@@ -958,15 +1619,62 @@ fn is_text(path: &Path) -> bool {
         })
 }
 
+fn is_pdf(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
+}
+
+fn render_pdf_first_page(path: &Path) -> Option<PathBuf> {
+    let directory = std::env::temp_dir().join("yeet/previews");
+    fs::create_dir_all(&directory).ok()?;
+    let base = directory.join(format!("preview-{}", Uuid::new_v4()));
+    let status = std::process::Command::new("pdftoppm")
+        .args([
+            "-f",
+            "1",
+            "-l",
+            "1",
+            "-singlefile",
+            "-scale-to",
+            "1400",
+            "-png",
+        ])
+        .arg(path)
+        .arg(&base)
+        .status()
+        .ok()?;
+    let preview = base.with_extension("png");
+    (status.success() && preview.exists()).then_some(preview)
+}
+
+fn clipboard_is_sensitive(clipboard: &gdk::Clipboard) -> bool {
+    clipboard.formats().mime_types().iter().any(|mime| {
+        let mime = mime.to_ascii_lowercase();
+        mime.contains("password")
+            || mime.contains("secret")
+            || mime.contains("keepass")
+            || mime.contains("1password")
+            || mime.contains("bitwarden")
+            || mime.contains("concealed")
+    })
+}
+
 fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_data(
         ".yeet-shelf { background: alpha(@window_bg_color, 0.96); border: 1px solid alpha(@accent_color, 0.55); border-radius: 12px; }\n\
          .yeet-edge { background: alpha(@accent_color, 0.04); }\n\
          .yeet-edge:drop(active) { background: alpha(@accent_color, 0.65); }\n\
+         .yeet-shelf.drop-active { border: 3px solid @accent_color; background: alpha(@accent_bg_color, 0.16); }\n\
          .yeet-shelf.duplicate { border: 3px solid @warning_color; }\n\
          .title { font-weight: 800; letter-spacing: 2px; }\n\
-         .boxed-list row { border-radius: 8px; margin-bottom: 5px; }",
+         .drag-preview { padding: 8px; border-radius: 10px; background: @theme_bg_color; border: 1px solid @theme_selected_bg_color; }\n\
+         .drag-count { min-width: 20px; min-height: 20px; border-radius: 10px; color: @theme_selected_fg_color; background: @theme_selected_bg_color; font-weight: bold; }\n\
+         .boxed-list row { border-radius: 8px; margin-bottom: 5px; transition: 160ms ease-in-out; }\n\
+         .boxed-list row:selected { background: @theme_selected_bg_color; color: @theme_selected_fg_color; }\n\
+         .boxed-list row:focus-visible, button:focus-visible, switch:focus-visible, spinbutton:focus-visible, dropdown:focus-visible { outline: 3px solid @theme_selected_bg_color; outline-offset: -3px; }\n\
+         .boxed-list row:selected:focus-visible { outline-color: @theme_selected_fg_color; }",
     );
     if let Some(display) = gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -974,5 +1682,61 @@ fn install_css() {
             &provider,
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keyboard_shortcuts_cover_all_shelf_operations() {
+        let none = gdk::ModifierType::empty();
+        let control = gdk::ModifierType::CONTROL_MASK;
+
+        assert_eq!(
+            keyboard_action(gdk::Key::Down, none),
+            Some(KeyboardAction::Navigate(Navigation::Next))
+        );
+        assert_eq!(
+            keyboard_action(gdk::Key::Up, none),
+            Some(KeyboardAction::Navigate(Navigation::Previous))
+        );
+        assert_eq!(
+            keyboard_action(gdk::Key::Delete, none),
+            Some(KeyboardAction::Remove)
+        );
+        assert_eq!(
+            keyboard_action(gdk::Key::c, control),
+            Some(KeyboardAction::Copy)
+        );
+        assert_eq!(
+            keyboard_action(gdk::Key::space, none),
+            Some(KeyboardAction::Preview)
+        );
+        assert_eq!(
+            keyboard_action(gdk::Key::Escape, none),
+            Some(KeyboardAction::Hide)
+        );
+        assert_eq!(
+            keyboard_action(gdk::Key::a, control),
+            Some(KeyboardAction::SelectAll)
+        );
+    }
+
+    #[test]
+    fn navigation_stops_at_boundaries_and_handles_an_empty_shelf() {
+        assert_eq!(navigation_target(None, 0, Navigation::Next), None);
+        assert_eq!(navigation_target(None, 3, Navigation::Next), Some(0));
+        assert_eq!(navigation_target(Some(0), 3, Navigation::Previous), Some(0));
+        assert_eq!(navigation_target(Some(0), 3, Navigation::Last), Some(2));
+        assert_eq!(navigation_target(Some(2), 3, Navigation::Next), Some(2));
+        assert_eq!(navigation_target(Some(2), 3, Navigation::First), Some(0));
+    }
+
+    #[test]
+    fn copied_paths_keep_model_order_and_are_line_separated() {
+        let paths = [PathBuf::from("first.txt"), PathBuf::from("second.txt")];
+        assert_eq!(paths_as_text(&paths), "first.txt\nsecond.txt");
     }
 }

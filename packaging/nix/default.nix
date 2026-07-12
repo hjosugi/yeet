@@ -1,8 +1,8 @@
 { lib, rustPlatform, pkg-config, wrapGAppsHook4, gtk4, gtk4-layer-shell }:
 
 rustPlatform.buildRustPackage rec {
-  pname = "wayland-yeet";
-  version = "0.2.0";
+  pname = "yeet";
+  version = "0.3.0";
   src = lib.cleanSource ../..;
   cargoLock.lockFile = ../../Cargo.lock;
 

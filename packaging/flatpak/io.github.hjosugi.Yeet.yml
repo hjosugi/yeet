@@ -1,16 +1,19 @@
 app-id: io.github.hjosugi.Yeet
 runtime: org.gnome.Platform
-runtime-version: '49'
+runtime-version: '50'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
 command: yeet
 finish-args:
-  - --share=ipc
   - --socket=wayland
   - --socket=fallback-x11
-  - --filesystem=host
-  - --talk-name=org.freedesktop.portal.Desktop
+  - --device=dri
+  - --filesystem=host:ro
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/*.a
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:

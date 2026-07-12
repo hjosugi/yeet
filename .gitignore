@@ -1,5 +1,9 @@
 build*/
 /target/
+/result
+/.flatpak-build/
+/.flatpak-builder/
+/.flatpak-repo/
 *.pdb
 .cache/
 compile_commands.json

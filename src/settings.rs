@@ -1,3 +1,4 @@
+use crate::i18n::Language;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -13,6 +14,14 @@ pub enum Theme {
     Dark,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenEdge {
+    Left,
+    #[default]
+    Right,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -21,6 +30,10 @@ pub struct Settings {
     pub autostart: bool,
     pub strip_size: i32,
     pub theme: Theme,
+    pub language: Language,
+    pub reduced_motion: bool,
+    pub edge: ScreenEdge,
+    pub disabled_outputs: Vec<String>,
 }
 
 impl Default for Settings {
@@ -31,6 +44,10 @@ impl Default for Settings {
             autostart: false,
             strip_size: 6,
             theme: Theme::System,
+            language: Language::System,
+            reduced_motion: false,
+            edge: ScreenEdge::Right,
+            disabled_outputs: Vec::new(),
         }
     }
 }
@@ -81,6 +98,10 @@ mod tests {
         assert!(settings.restore_shelf);
         assert_eq!(settings.strip_size, 6);
         assert_eq!(settings.theme, Theme::System);
+        assert_eq!(settings.language, Language::System);
+        assert!(!settings.reduced_motion);
+        assert_eq!(settings.edge, ScreenEdge::Right);
+        assert!(settings.disabled_outputs.is_empty());
     }
 
     #[test]

@@ -6,17 +6,44 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <description>
-    <p>Yeet is a lightweight drag-and-drop shelf. Drop files or text on its
-    edge shelf, navigate to a destination, then drag the items back out.</p>
-    <p>It integrates with layer-shell compositors on Wayland and uses native
-    topmost tool windows on Windows.</p>
+    <p>Yeet keeps files and text in a temporary edge shelf while you move
+    between applications, folders, workspaces, and monitors. Drop items onto
+    the shelf, navigate without holding the mouse button, then drag them to
+    their destination.</p>
+    <p>The shelf supports multiple items, selection, pinning, previews, and
+    session persistence. On compatible Wayland compositors it uses
+    layer-shell to stay available at the screen edge.</p>
   </description>
   <launchable type="desktop-id">io.github.hjosugi.Yeet.desktop</launchable>
   <url type="homepage">https://github.com/hjosugi/wayland-yeet</url>
   <url type="bugtracker">https://github.com/hjosugi/wayland-yeet/issues</url>
+  <url type="vcs-browser">https://github.com/hjosugi/wayland-yeet</url>
   <developer id="io.github.hjosugi"><name>hjosugi</name></developer>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>touch</control>
+  </supports>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/hjosugi/wayland-yeet/v0.3.0/docs/screenshots/yeet-linux-dark.png</image>
+      <caption>Yeet holding files in its dark GTK theme</caption>
+    </screenshot>
+  </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="0.2.0" date="2026-07-12"/>
+    <release version="0.3.0" date="2026-07-12">
+      <description>
+        <p>Adds global shortcuts, tray integration, English/Japanese UI,
+        accessibility, screen-edge settings, reduced motion, PDF previews,
+        and complete Nix/Arch/Flatpak release preparation.</p>
+      </description>
+    </release>
+    <release version="0.2.0" date="2026-07-12">
+      <description>
+        <p>Native Rust and GTK 4 rewrite with Wayland layer-shell support,
+        multi-item drag and drop, pinning, previews, and persistence.</p>
+      </description>
+    </release>
   </releases>
 </component>

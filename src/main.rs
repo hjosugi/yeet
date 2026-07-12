@@ -1,4 +1,5 @@
 mod platform;
+mod services;
 mod ui;
 
 use gio::ApplicationFlags;
