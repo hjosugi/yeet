@@ -42,6 +42,8 @@ modules:
       - install -Dm644 assets/io.github.hjosugi.Yeet.svg /app/share/icons/hicolor/scalable/apps/io.github.hjosugi.Yeet.svg
       - install -Dm644 packaging/linux/yeet.1 /app/share/man/man1/yeet.1
     sources:
-      - type: dir
-        path: ../..
+      - type: git
+        url: https://github.com/hjosugi/yeet.git
+        tag: v0.2.0
+        commit: af7ad4eff69cf90c92c962fc46952a70223ce94d
       - cargo-sources.json

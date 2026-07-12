@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $hash = (Get-FileHash -Algorithm SHA256 $Installer).Hash
-$baseUrl = "https://github.com/hjosugi/wayland-yeet/releases/download/v$Version"
+$baseUrl = "https://github.com/hjosugi/yeet/releases/download/v$Version"
 New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
 
 @"
@@ -41,15 +41,15 @@ PackageLocale: en-US
 Publisher: hjosugi
 PublisherUrl: https://github.com/hjosugi
 PackageName: Yeet
-PackageUrl: https://github.com/hjosugi/wayland-yeet
+PackageUrl: https://github.com/hjosugi/yeet
 License: MIT
-LicenseUrl: https://github.com/hjosugi/wayland-yeet/blob/v$Version/LICENSE
+LicenseUrl: https://github.com/hjosugi/yeet/blob/v$Version/LICENSE
 ShortDescription: Native Yoink-style drag-and-drop shelf for Wayland and Windows
 Tags:
 - drag-and-drop
 - files
 - utility
-ReleaseNotesUrl: https://github.com/hjosugi/wayland-yeet/releases/tag/v$Version
+ReleaseNotesUrl: https://github.com/hjosugi/yeet/releases/tag/v$Version
 ManifestType: defaultLocale
 ManifestVersion: 1.10.0
 "@ | Set-Content -Encoding utf8 "$OutputDirectory/hjosugi.Yeet.locale.en-US.yaml"

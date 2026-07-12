@@ -2,7 +2,7 @@ pkgbase = yeet-shelf-git
 	pkgdesc = Native Yoink-style drag-and-drop shelf for Wayland and Windows (git)
 	pkgver = 0.2.0.r0.g0000000
 	pkgrel = 1
-	url = https://github.com/hjosugi/wayland-yeet
+	url = https://github.com/hjosugi/yeet
 	arch = x86_64
 	license = MIT
 	makedepends = cargo
@@ -13,7 +13,7 @@ pkgbase = yeet-shelf-git
 	provides = yeet
 	conflicts = yeet-shelf
 	conflicts = yeet
-	source = yeet::git+https://github.com/hjosugi/wayland-yeet.git
+	source = yeet::git+https://github.com/hjosugi/yeet.git
 	sha256sums = SKIP
 
 pkgname = yeet-shelf-git

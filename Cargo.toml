@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.92"
 description = "A native drag-and-drop shelf for Wayland and Windows"
 license = "MIT"
-repository = "https://github.com/hjosugi/wayland-yeet"
+repository = "https://github.com/hjosugi/yeet"
 
 [[bin]]
 name = "yeet"

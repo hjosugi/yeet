@@ -15,9 +15,9 @@
     layer-shell to stay available at the screen edge.</p>
   </description>
   <launchable type="desktop-id">io.github.hjosugi.Yeet.desktop</launchable>
-  <url type="homepage">https://github.com/hjosugi/wayland-yeet</url>
-  <url type="bugtracker">https://github.com/hjosugi/wayland-yeet/issues</url>
-  <url type="vcs-browser">https://github.com/hjosugi/wayland-yeet</url>
+  <url type="homepage">https://github.com/hjosugi/yeet</url>
+  <url type="bugtracker">https://github.com/hjosugi/yeet/issues</url>
+  <url type="vcs-browser">https://github.com/hjosugi/yeet</url>
   <developer id="io.github.hjosugi"><name>hjosugi</name></developer>
   <supports>
     <control>keyboard</control>
@@ -26,7 +26,7 @@
   </supports>
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/hjosugi/wayland-yeet/v0.3.0/docs/screenshots/yeet-linux-dark.png</image>
+      <image>https://raw.githubusercontent.com/hjosugi/yeet/v0.3.0/docs/screenshots/yeet-linux-dark.png</image>
       <caption>Yeet holding files in its dark GTK theme</caption>
     </screenshot>
   </screenshots>

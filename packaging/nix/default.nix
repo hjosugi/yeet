@@ -18,7 +18,7 @@ rustPlatform.buildRustPackage rec {
 
   meta = {
     description = "Native Yoink-style drag-and-drop shelf";
-    homepage = "https://github.com/hjosugi/wayland-yeet";
+    homepage = "https://github.com/hjosugi/yeet";
     license = lib.licenses.mit;
     mainProgram = "yeet";
     platforms = lib.platforms.linux;

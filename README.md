@@ -1,6 +1,6 @@
 # Yeet
 
-[![CI](https://github.com/hjosugi/wayland-yeet/actions/workflows/ci.yml/badge.svg)](https://github.com/hjosugi/wayland-yeet/actions/workflows/ci.yml)
+[![CI](https://github.com/hjosugi/yeet/actions/workflows/ci.yml/badge.svg)](https://github.com/hjosugi/yeet/actions/workflows/ci.yml)
 
 **A Yoink-style drag-and-drop shelf for Wayland and Windows.**
 
@@ -69,7 +69,7 @@ Download the current release archive and install it under `/usr/local`:
 
 ```sh
 version=0.3.0
-base="https://github.com/hjosugi/wayland-yeet/releases/download/v${version}"
+base="https://github.com/hjosugi/yeet/releases/download/v${version}"
 curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
 curl -fLO "$base/SHA256SUMS-linux.txt"
 grep "yeet-${version}-linux-x86_64.tar.gz" SHA256SUMS-linux.txt | sha256sum -c -
@@ -110,7 +110,7 @@ sudo ldconfig
 
 The release archive currently targets x86-64. Arch users can alternatively
 build `packaging/arch/PKGBUILD`; Nix users can run
-`nix run github:hjosugi/wayland-yeet`.
+`nix run github:hjosugi/yeet`.
 
 ## Build from source
 
