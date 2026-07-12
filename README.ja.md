@@ -13,7 +13,7 @@ Wayland と Windows 向けの、Yoink ライクな軽量ドラッグ＆ドロッ
 0.3 は Rust ネイティブ版として、core shelf、file/text/image drop、
 複数選択 drag-out、pin、preview、永続化、settings、clipboard capture、
 single-instance CLI forwarding、multi-monitor strip、`gtk4-layer-shell` と
-GNOME fallback、GlobalShortcuts portal、tray、キーボード操作、日英UIを
+GNOME fallback、GlobalShortcuts portal、Linux tray、キーボード操作、日英UIを
 実装しています。
 
 ## Linux へインストール

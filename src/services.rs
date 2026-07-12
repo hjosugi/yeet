@@ -169,76 +169,15 @@ mod backend {
 mod backend {
     use super::DesktopAction;
     use std::sync::mpsc::Sender;
-    use tray_icon::{
-        Icon, TrayIcon, TrayIconBuilder,
-        menu::{Menu, MenuEvent, MenuItem},
-    };
-    use wayland_yeet::i18n::tr;
 
-    pub struct Backend {
-        tray: Option<TrayIcon>,
-    }
+    pub struct Backend;
 
     impl Backend {
-        pub fn update_count(&self, count: usize) {
-            if let Some(tray) = &self.tray {
-                let _ = tray.set_tooltip(Some(format!("Yeet — {count} item(s)")));
-            }
-        }
+        pub fn update_count(&self, _count: usize) {}
     }
 
-    pub fn install(sender: Sender<DesktopAction>) -> Backend {
-        let menu = Menu::new();
-        let items = [
-            MenuItem::with_id("toggle", tr("show_hide"), true, None),
-            MenuItem::with_id("capture", tr("capture_clipboard"), true, None),
-            MenuItem::with_id("clear", tr("clear"), true, None),
-            MenuItem::with_id("settings", tr("settings"), true, None),
-            MenuItem::with_id("quit", tr("quit"), true, None),
-        ];
-        if let Err(error) =
-            menu.append_items(&[&items[0], &items[1], &items[2], &items[3], &items[4]])
-        {
-            eprintln!("yeet: tray menu: {error}");
-        }
-        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            let action = match event.id.0.as_str() {
-                "toggle" => DesktopAction::Toggle,
-                "capture" => DesktopAction::CaptureClipboard,
-                "clear" => DesktopAction::Clear,
-                "settings" => DesktopAction::Settings,
-                "quit" => DesktopAction::Quit,
-                _ => return,
-            };
-            let _ = sender.send(action);
-        }));
-        let tray = TrayIconBuilder::new()
-            .with_id("io.github.hjosugi.Yeet")
-            .with_tooltip("Yeet")
-            .with_menu(Box::new(menu))
-            .with_icon(tray_icon())
-            .build()
-            .map_err(|error| eprintln!("yeet: tray icon: {error}"))
-            .ok();
-        Backend { tray }
-    }
-
-    fn tray_icon() -> Icon {
-        let mut rgba = vec![0_u8; 32 * 32 * 4];
-        for y in 0_usize..32 {
-            for x in 0_usize..32 {
-                let offset = (y * 32 + x) * 4;
-                let white_y = (y < 15 && (x.abs_diff(8 + y / 2) < 2 || x.abs_diff(24 - y / 2) < 2))
-                    || (y >= 14 && x.abs_diff(16) < 2);
-                let color = if white_y {
-                    [255, 255, 255, 255]
-                } else {
-                    [111, 66, 193, 255]
-                };
-                rgba[offset..offset + 4].copy_from_slice(&color);
-            }
-        }
-        Icon::from_rgba(rgba, 32, 32).expect("valid built-in tray icon")
+    pub fn install(_sender: Sender<DesktopAction>) -> Backend {
+        Backend
     }
 }
 

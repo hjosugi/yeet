@@ -61,7 +61,7 @@ Wayland first, with Windows kept in the same codebase.
 - Clipboard capture, image/text preview, context actions, persistent settings,
   configurable edge width and per-user autostart.
 - Full keyboard navigation and GTK accessibility metadata, English/Japanese UI,
-  reduced-motion support, and a Linux/Windows tray menu.
+  reduced-motion support, and a Linux StatusNotifier tray menu.
 
 ## Install on Linux
 

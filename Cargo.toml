@@ -29,7 +29,6 @@ tokio = { version = "1", features = ["rt", "time"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 gdk-win32 = { package = "gdk4-win32", version = "0.11", features = ["win32"] }
-tray-icon = { version = "0.24", default-features = false, features = ["common-controls-v6"] }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
