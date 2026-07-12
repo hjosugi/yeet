@@ -11,10 +11,31 @@ leaves the shelf, it disappears.
 
 ![Yeet shelf holding two files](docs/screenshots/yeet-linux-dark.png)
 
-> Status: **0.3 native release**. The current build has the core shelf,
-> file/text drop-in, multi-item drag-out, pinning, persistence, single-instance
-> CLI forwarding, multi-monitor edge strips and Wayland layer-shell/fallback
-> paths. See [the test matrix](docs/compositors.md) for verification status.
+> Development status: **main is targeting v0.4**. It includes native Linux and
+> Windows tray menus, defensive file/URI drop handling, accepted-versus-cancelled
+> drag-out accounting, and MIME-preserving text/image snippets. Real compositor
+> and Windows verification remains tracked separately in the
+> [test matrix](docs/compositors.md); an implemented path is not presented as a
+> verified platform result.
+
+## Quick start
+
+On NixOS or another system with flakes enabled:
+
+```sh
+nix run github:hjosugi/yeet -- --hidden
+```
+
+On other Linux distributions, install GTK 4 and `gtk4-layer-shell`, then use
+the [Linux release archive](#install-on-linux) or [build from source](#build-from-source).
+Use `yeet --toggle` if the compositor does not support an edge strip.
+
+On Windows, download the setup EXE or portable ZIP from
+[Releases](https://github.com/hjosugi/yeet/releases), start Yeet, then press
+Ctrl+Alt+Y (the configurable default) or left-click the notification-area icon.
+Pressing the same shortcut twice quickly captures the clipboard. Development
+and unsigned release artifacts can trigger SmartScreen; see the
+[Windows notes](docs/windows.md).
 
 ## Why
 
@@ -24,6 +45,25 @@ options are either X11-era, CLI-only ([dragon](https://github.com/mwh/dragon)),
 or Electron-based ([DropPoint](https://github.com/GameGodS3/DropPoint)) with
 weak Wayland integration. Yeet is a native Rust/GTK 4 app designed for
 Wayland first, with Windows kept in the same codebase.
+
+## Comparison
+
+<!-- markdownlint-disable MD013 -->
+
+| Capability | Yeet | Yoink (macOS) | DropPoint | dragon |
+| --- | --- | --- | --- | --- |
+| Reveal while dragging at a screen edge | Yes, via an always-mapped strip | Yes | Manual/shortcut | CLI launch |
+| Native Wayland integration | `gtk4-layer-shell` with a documented fallback | N/A | Chromium/Wayland | GTK 3, X11-first |
+| Windows support | Native backend in the same Rust codebase | No | Yes, Electron | No |
+| Multi-item drag-out | Yes | Yes | Yes | Yes |
+| Text/image snippets | Yes, preserving the stored MIME type | Yes | No | No |
+| Hide automatically when empty | Yes | Yes | No | Optional exit mode |
+
+<!-- markdownlint-enable MD013 -->
+
+This table describes product shape, not compositor certification or a
+performance benchmark. See the linked verification matrices for tested
+environments.
 
 ## Core behavior
 
@@ -38,37 +78,57 @@ Wayland first, with Windows kept in the same codebase.
 
 ## Platform integration
 
+<!-- markdownlint-disable MD013 -->
+
 | | Wayland (Linux) | Windows |
-|---|---|---|
+| --- | --- | --- |
 | Edge trigger | `zwlr_layer_shell_v1` via `gtk4-layer-shell` | topmost frameless OLE drop-target strip |
 | Shelf window | layer-shell overlay surface | frameless topmost tool window |
-| Global shortcut | XDG GlobalShortcuts portal, with `yeet --toggle` fallback | Ctrl+Alt+Y via `RegisterHotKey` |
+| Global shortcut | XDG GlobalShortcuts portal, with `yeet --toggle` fallback | configurable, default Ctrl+Alt+Y via `RegisterHotKey` |
 | Drag in/out | `wl_data_device` (via GTK/GDK) | OLE (via GTK/GDK) |
+| Tray | StatusNotifier menu | native notification-area menu |
 | Fallback | regular window mode (GNOME) | — |
+
+<!-- markdownlint-enable MD013 -->
 
 ## Current features
 
-- Drop files, folders and text; text becomes a managed snippet.
+- Drop files, folders, URI lists, text and images. Local files are normalized,
+  browser HTTP(S) references become explicit shortcuts, and unsupported or
+  unavailable URIs are reported instead of silently becoming broken items.
 - Drag one item or a Ctrl-selected group back out. Cancelled drags stay on the
   shelf; accepted drops remove only unpinned items.
+- Text and image snippets retain their MIME type and offer both native snippet
+  bytes and a file-list fallback during drag-out.
 - Atomic shelf persistence and single-instance argument forwarding.
 - `yeet FILE...`, `--toggle`, `--clear`, `--hidden` and `--help`.
 - A strip on every monitor; the shelf opens on the monitor the drag entered.
 - `gtk4-layer-shell` overlay surfaces where available and a documented GNOME
   shortcut/CLI fallback.
-- GTK theme following, a Windows Ctrl+Alt+Y hotkey, and a Windows backend that
-  reapplies `HWND_TOPMOST` whenever the shelf is shown.
+- GTK theme following, a configurable Windows global shortcut (Ctrl+Alt+Y by
+  default), and a Windows backend that reapplies `HWND_TOPMOST` whenever the
+  shelf is shown. A failed shortcut change reports the conflict and restores
+  the previous registration when possible.
 - Clipboard capture, image/text preview, context actions, persistent settings,
   configurable edge width and per-user autostart.
 - Full keyboard navigation and GTK accessibility metadata, English/Japanese UI,
-  reduced-motion support, and a Linux StatusNotifier tray menu.
+  reduced-motion support, and Linux StatusNotifier plus native Windows tray
+  menus.
+- The Windows notification-area icon shows the shelf item count, toggles the
+  shelf on left-click, and offers Show/Hide, Capture Clipboard, Clear, Settings,
+  and Quit actions.
+
+Windows-target compilation covers these native paths, but the tray interactions,
+shortcut conflict/rollback behavior, and topmost behavior across real Windows
+focus/display changes still require the checks in
+[Windows behavior and verification](docs/windows.md).
 
 ## Install on Linux
 
 Download the current release archive and install it under `/usr/local`:
 
 ```sh
-version=0.3.0
+version=0.4.0
 base="https://github.com/hjosugi/yeet/releases/download/v${version}"
 curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
 curl -fLO "$base/SHA256SUMS-linux.txt"
@@ -99,7 +159,8 @@ upstream library used by CI before running Yeet:
 ```sh
 sudo apt update
 sudo apt install libgtk-4-dev libwayland-dev wayland-protocols meson ninja-build
-git clone --depth 1 --branch v1.3.0 https://github.com/wmww/gtk4-layer-shell.git /tmp/gtk4-layer-shell
+git clone --depth 1 --branch v1.3.0 \
+  https://github.com/wmww/gtk4-layer-shell.git /tmp/gtk4-layer-shell
 meson setup /tmp/gtk4-layer-shell/build /tmp/gtk4-layer-shell \
   --prefix=/usr/local -Dexamples=false -Ddocs=false -Dtests=false \
   -Dintrospection=false -Dvapi=false
@@ -135,7 +196,9 @@ the system's default PDF application.
 
 See [Wayland compositor verification](docs/compositors.md) and
 [Windows behavior and limitations](docs/windows.md) before filing a
-platform-specific bug.
+platform-specific bug. Contributors updating README media should follow the
+[reproducible demo-capture contract](docs/demo-capture.md); missing captures are
+tracked there and must not be replaced with mockups.
 
 ## Prior art & credits
 

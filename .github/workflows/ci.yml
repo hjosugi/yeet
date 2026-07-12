@@ -121,6 +121,22 @@ jobs:
       - name: Launch smoke test
         shell: msys2 {0}
         run: ./target/release/yeet.exe --version | grep '^Yeet '
+      - name: Validate winget packaging scripts
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
+          $manifestDirectory = Join-Path $env:RUNNER_TEMP "yeet-winget"
+          $submissionDirectory = Join-Path $env:RUNNER_TEMP "yeet-winget-submission"
+          ./packaging/windows/New-WingetManifest.ps1 `
+            -Version $version -Installer target/release/yeet.exe -OutputDirectory $manifestDirectory
+          ./packaging/windows/Test-WingetManifest.ps1 `
+            -Version $version -ManifestDirectory $manifestDirectory -Installer target/release/yeet.exe
+          ./packaging/windows/New-WingetSubmission.ps1 `
+            -Version $version -ManifestDirectory $manifestDirectory -OutputDirectory $submissionDirectory
+          $staged = Join-Path $submissionDirectory "manifests/h/hjosugi/Yeet/$version"
+          if (@(Get-ChildItem -LiteralPath $staged -Filter '*.yaml').Count -ne 3) {
+            throw "Expected three staged winget manifests."
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: yeet-windows

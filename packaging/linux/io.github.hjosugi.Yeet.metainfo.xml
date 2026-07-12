@@ -32,6 +32,13 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.0" date="2026-07-12">
+      <description>
+        <p>Adds native Windows tray controls, more defensive file and URI drop
+        handling, reliable accepted-versus-cancelled drag-out behavior, and
+        MIME-preserving text and image snippets.</p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-07-12">
       <description>
         <p>Adds global shortcuts, tray integration, English/Japanese UI,

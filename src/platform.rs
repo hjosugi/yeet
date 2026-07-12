@@ -1,8 +1,46 @@
 use gtk::gdk;
-use wayland_yeet::settings::{ScreenEdge, Theme};
+#[cfg(not(target_os = "windows"))]
+use wayland_yeet::settings::HotkeyBinding;
+use wayland_yeet::settings::{HotkeyParseError, ScreenEdge, Theme};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GlobalHotkeyError {
+    Invalid(HotkeyParseError),
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    Conflict {
+        shortcut: String,
+        previous_restored: bool,
+        detail: String,
+    },
+    Unavailable(String),
+}
+
+impl std::fmt::Display for GlobalHotkeyError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid(error) => write!(formatter, "invalid shortcut: {error}"),
+            Self::Conflict {
+                shortcut,
+                previous_restored,
+                detail,
+            } => write!(
+                formatter,
+                "{shortcut} is already in use or reserved ({detail}); previous shortcut {}",
+                if *previous_restored {
+                    "restored"
+                } else {
+                    "could not be restored"
+                }
+            ),
+            Self::Unavailable(detail) => write!(formatter, "global shortcut unavailable: {detail}"),
+        }
+    }
+}
 
 #[cfg(target_os = "windows")]
 static THEME_OVERRIDE: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(0);
+#[cfg(target_os = "windows")]
+static SHELF_EDGE: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(1);
 
 #[cfg(target_os = "windows")]
 pub fn set_theme(theme: Theme) {
@@ -35,16 +73,54 @@ pub fn layer_shell_supported() -> bool {
 }
 
 #[cfg(target_os = "linux")]
-pub fn install_global_hotkey(callback: impl Fn() + 'static) {
+pub struct GlobalHotkey;
+
+#[cfg(target_os = "linux")]
+impl GlobalHotkey {
+    pub fn registration_error(&self) -> Option<&GlobalHotkeyError> {
+        None
+    }
+
+    pub fn rebind(&mut self, shortcut: &str) -> Result<String, GlobalHotkeyError> {
+        HotkeyBinding::parse(shortcut)
+            .map(|binding| binding.normalized().to_owned())
+            .map_err(GlobalHotkeyError::Invalid)
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn install_global_hotkey(_shortcut: &str, callback: impl Fn() + 'static) -> GlobalHotkey {
     linux_impl::install_global_hotkey(callback);
+    GlobalHotkey
 }
 
 #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
-pub fn install_global_hotkey(_callback: impl Fn() + 'static) {}
+pub struct GlobalHotkey;
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+impl GlobalHotkey {
+    pub fn registration_error(&self) -> Option<&GlobalHotkeyError> {
+        None
+    }
+
+    pub fn rebind(&mut self, shortcut: &str) -> Result<String, GlobalHotkeyError> {
+        HotkeyBinding::parse(shortcut)
+            .map(|binding| binding.normalized().to_owned())
+            .map_err(GlobalHotkeyError::Invalid)
+    }
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+pub fn install_global_hotkey(_shortcut: &str, _callback: impl Fn() + 'static) -> GlobalHotkey {
+    GlobalHotkey
+}
 
 #[cfg(target_os = "windows")]
-pub fn install_global_hotkey(callback: impl Fn() + 'static) {
-    windows_impl::install_global_hotkey(callback);
+pub use windows_impl::GlobalHotkey;
+
+#[cfg(target_os = "windows")]
+pub fn install_global_hotkey(shortcut: &str, callback: impl Fn() + 'static) -> GlobalHotkey {
+    windows_impl::GlobalHotkey::install(shortcut, callback)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -62,16 +138,13 @@ pub fn configure_shelf(window: &gtk::ApplicationWindow, edge: ScreenEdge) {
     window.init_layer_shell();
     window.set_layer(Layer::Overlay);
     window.set_namespace(Some("yeet-shelf"));
-    window.set_anchor(Edge::Right, edge == ScreenEdge::Right);
-    window.set_anchor(Edge::Left, edge == ScreenEdge::Left);
     window.set_anchor(Edge::Top, true);
     window.set_anchor(Edge::Bottom, true);
-    window.set_margin(Edge::Right, if edge == ScreenEdge::Right { 8 } else { 0 });
-    window.set_margin(Edge::Left, if edge == ScreenEdge::Left { 8 } else { 0 });
     window.set_margin(Edge::Top, 48);
     window.set_margin(Edge::Bottom, 48);
     window.set_exclusive_zone(0);
     window.set_keyboard_mode(KeyboardMode::OnDemand);
+    update_shelf_placement(window, edge);
 }
 
 #[cfg(target_os = "windows")]
@@ -86,12 +159,34 @@ pub fn configure_shelf(window: &gtk::ApplicationWindow, _edge: ScreenEdge) {
 }
 
 #[cfg(target_os = "linux")]
+pub fn update_shelf_placement(window: &gtk::ApplicationWindow, edge: ScreenEdge) {
+    use gtk4_layer_shell::{Edge, LayerShell};
+
+    if !layer_shell_supported() {
+        return;
+    }
+    window.set_anchor(Edge::Right, edge == ScreenEdge::Right);
+    window.set_anchor(Edge::Left, edge == ScreenEdge::Left);
+    window.set_margin(Edge::Right, if edge == ScreenEdge::Right { 8 } else { 0 });
+    window.set_margin(Edge::Left, if edge == ScreenEdge::Left { 8 } else { 0 });
+}
+
+#[cfg(target_os = "windows")]
+pub fn update_shelf_placement(window: &gtk::ApplicationWindow, edge: ScreenEdge) {
+    windows_impl::update_shelf_placement(window, edge);
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+pub fn update_shelf_placement(_window: &gtk::ApplicationWindow, _edge: ScreenEdge) {}
+
+#[cfg(target_os = "linux")]
 pub fn configure_edge(
     window: &gtk::Window,
     monitor: &gdk::Monitor,
-    _strip_size: i32,
+    strip_size: i32,
     edge: ScreenEdge,
 ) {
+    use gtk::prelude::GtkWindowExt;
     use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
     if !layer_shell_supported() {
@@ -100,6 +195,7 @@ pub fn configure_edge(
     window.init_layer_shell();
     window.set_layer(Layer::Overlay);
     window.set_namespace(Some("yeet-edge-strip"));
+    window.set_default_size(strip_size.clamp(3, 16), 1);
     window.set_monitor(Some(monitor));
     window.set_anchor(Edge::Right, edge == ScreenEdge::Right);
     window.set_anchor(Edge::Left, edge == ScreenEdge::Left);
@@ -121,6 +217,14 @@ pub fn set_shelf_monitor(
         window.set_monitor(Some(monitor));
     }
 }
+
+#[cfg(target_os = "windows")]
+pub fn refresh_window_theme(window: &gtk::Window) {
+    windows_impl::refresh_window_theme(window);
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn refresh_window_theme(_window: &gtk::Window) {}
 
 #[cfg(target_os = "windows")]
 pub fn configure_edge(
@@ -299,20 +403,21 @@ mod linux_impl {
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
+    use super::GlobalHotkeyError;
     use gdk_win32::{Win32Display, Win32MessageFilterReturn, Win32Surface};
     use gio::prelude::*;
     use glib::object::Cast;
     use gtk::gdk;
     use gtk::prelude::*;
     use std::sync::atomic::Ordering;
-    use wayland_yeet::settings::ScreenEdge;
+    use wayland_yeet::settings::{HotkeyBinding, ScreenEdge};
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Dwm::{
         DWM_WINDOW_CORNER_PREFERENCE, DWMWA_USE_IMMERSIVE_DARK_MODE,
         DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey,
+        HOT_KEY_MODIFIERS, MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GWL_EXSTYLE, GetWindowLongPtrW, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE,
@@ -322,40 +427,153 @@ mod windows_impl {
 
     const HOTKEY_ID: i32 = 0x5945;
 
-    pub fn install_global_hotkey(callback: impl Fn() + 'static) {
-        let Some(display) = gdk::Display::default() else {
-            return;
-        };
-        let Ok(display) = display.downcast::<Win32Display>() else {
-            return;
-        };
-        if let Err(error) = unsafe {
-            RegisterHotKey(
-                None,
-                HOTKEY_ID,
-                MOD_CONTROL | MOD_ALT | MOD_NOREPEAT,
-                b'Y' as u32,
-            )
-        } {
-            eprintln!("yeet: Ctrl+Alt+Y is unavailable: {error}");
-            return;
-        }
-        let filter = display.add_filter(move |_, message, _| {
-            if message.message == WM_HOTKEY && message.wParam.0 as i32 == HOTKEY_ID {
-                callback();
-                Win32MessageFilterReturn::Remove
-            } else {
-                Win32MessageFilterReturn::Continue
+    pub struct GlobalHotkey {
+        _filter: Option<gdk_win32::Win32DisplayFilterHandle>,
+        current: Option<HotkeyBinding>,
+        last_error: Option<GlobalHotkeyError>,
+    }
+
+    impl GlobalHotkey {
+        pub fn install(shortcut: &str, callback: impl Fn() + 'static) -> Self {
+            let Some(display) = gdk::Display::default() else {
+                return Self::unavailable("GDK display is not ready");
+            };
+            let Ok(display) = display.downcast::<Win32Display>() else {
+                return Self::unavailable("the active GDK display is not Win32");
+            };
+            let filter = display.add_filter(move |_, message, _| {
+                if message.message == WM_HOTKEY && message.wParam.0 as i32 == HOTKEY_ID {
+                    callback();
+                    Win32MessageFilterReturn::Remove
+                } else {
+                    Win32MessageFilterReturn::Continue
+                }
+            });
+            let mut hotkey = Self {
+                _filter: Some(filter),
+                current: None,
+                last_error: None,
+            };
+            if let Err(error) = hotkey.rebind(shortcut) {
+                eprintln!("yeet: {error}");
             }
-        });
-        Box::leak(Box::new(filter));
+            hotkey
+        }
+
+        fn unavailable(detail: &str) -> Self {
+            Self {
+                _filter: None,
+                current: None,
+                last_error: Some(GlobalHotkeyError::Unavailable(detail.to_owned())),
+            }
+        }
+
+        pub fn registration_error(&self) -> Option<&GlobalHotkeyError> {
+            self.last_error.as_ref()
+        }
+
+        pub fn rebind(&mut self, shortcut: &str) -> Result<String, GlobalHotkeyError> {
+            if self._filter.is_none() {
+                let error = self.last_error.clone().unwrap_or_else(|| {
+                    GlobalHotkeyError::Unavailable("Win32 message filter is unavailable".to_owned())
+                });
+                return Err(error);
+            }
+
+            let candidate = match HotkeyBinding::parse(shortcut) {
+                Ok(candidate) => candidate,
+                Err(error) => {
+                    let error = GlobalHotkeyError::Invalid(error);
+                    if self.current.is_none() {
+                        self.last_error = Some(error.clone());
+                    }
+                    return Err(error);
+                }
+            };
+            if self.current.as_ref() == Some(&candidate) {
+                self.last_error = None;
+                return Ok(candidate.normalized().to_owned());
+            }
+
+            let previous = self.current.take();
+            if previous.is_some()
+                && let Err(error) = unsafe { UnregisterHotKey(None, HOTKEY_ID) }
+            {
+                self.current = previous;
+                let error = GlobalHotkeyError::Unavailable(format!(
+                    "could not release the current shortcut: {error}"
+                ));
+                self.last_error = None;
+                return Err(error);
+            }
+
+            match register(&candidate) {
+                Ok(()) => {
+                    let normalized = candidate.normalized().to_owned();
+                    self.current = Some(candidate);
+                    self.last_error = None;
+                    Ok(normalized)
+                }
+                Err(register_error) => {
+                    let previous_restored = previous
+                        .as_ref()
+                        .is_some_and(|binding| register(binding).is_ok());
+                    self.current = if previous_restored { previous } else { None };
+                    let error = GlobalHotkeyError::Conflict {
+                        shortcut: candidate.normalized().to_owned(),
+                        previous_restored,
+                        detail: register_error.to_string(),
+                    };
+                    self.last_error = (!previous_restored).then_some(error.clone());
+                    Err(error)
+                }
+            }
+        }
+    }
+
+    impl Drop for GlobalHotkey {
+        fn drop(&mut self) {
+            if self.current.take().is_some() {
+                let _ = unsafe { UnregisterHotKey(None, HOTKEY_ID) };
+            }
+        }
+    }
+
+    fn register(binding: &HotkeyBinding) -> windows::core::Result<()> {
+        let modifiers = HOT_KEY_MODIFIERS(binding.modifier_mask()) | MOD_NOREPEAT;
+        unsafe { RegisterHotKey(None, HOTKEY_ID, modifiers, binding.virtual_key()) }
     }
 
     pub fn configure_shelf(window: &gtk::ApplicationWindow, edge: ScreenEdge) {
+        set_shelf_edge(edge);
         let window = window.clone().upcast::<gtk::Window>();
-        window.connect_realize(move |window| apply_to_current_monitor(window, false, edge));
+        window.connect_realize(move |window| {
+            apply_to_current_monitor(window, false, current_shelf_edge())
+        });
         // Reassert HWND_TOPMOST every time the hidden shelf is mapped again.
-        window.connect_map(move |window| apply_to_current_monitor(window, false, edge));
+        window.connect_map(move |window| {
+            apply_to_current_monitor(window, false, current_shelf_edge())
+        });
+    }
+
+    pub fn update_shelf_placement(window: &gtk::ApplicationWindow, edge: ScreenEdge) {
+        set_shelf_edge(edge);
+        apply_to_current_monitor(window.upcast_ref(), false, edge);
+    }
+
+    fn set_shelf_edge(edge: ScreenEdge) {
+        super::SHELF_EDGE.store(
+            if edge == ScreenEdge::Right { 1 } else { 0 },
+            Ordering::Relaxed,
+        );
+    }
+
+    fn current_shelf_edge() -> ScreenEdge {
+        if super::SHELF_EDGE.load(Ordering::Relaxed) == 0 {
+            ScreenEdge::Left
+        } else {
+            ScreenEdge::Right
+        }
     }
 
     pub fn configure_window(
@@ -441,13 +659,7 @@ mod windows_impl {
                 style |= WS_EX_NOACTIVATE.0 as isize;
             }
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
-            let dark: i32 = i32::from(prefers_dark());
-            let _ = DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_USE_IMMERSIVE_DARK_MODE,
-                (&dark as *const i32).cast(),
-                std::mem::size_of::<i32>() as u32,
-            );
+            apply_native_theme(hwnd);
             if !edge {
                 let corners = DWMWCP_ROUND;
                 let _ = DwmSetWindowAttribute(
@@ -467,6 +679,28 @@ mod windows_impl {
                 SWP_NOACTIVATE | SWP_FRAMECHANGED,
             );
         }
+    }
+
+    pub fn refresh_window_theme(window: &gtk::Window) {
+        let Some(surface) = window.surface() else {
+            return;
+        };
+        let Ok(surface) = surface.downcast::<Win32Surface>() else {
+            return;
+        };
+        unsafe { apply_native_theme(HWND(surface.handle().0)) };
+    }
+
+    unsafe fn apply_native_theme(hwnd: HWND) {
+        let dark: i32 = i32::from(prefers_dark());
+        let _ = unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                (&dark as *const i32).cast(),
+                std::mem::size_of::<i32>() as u32,
+            )
+        };
     }
 
     fn prefers_dark() -> bool {

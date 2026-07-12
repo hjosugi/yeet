@@ -1,11 +1,13 @@
 param(
-    [Parameter(Mandatory = $true)][string]$Version,
-    [Parameter(Mandatory = $true)][string]$Installer,
+    [Parameter(Mandatory = $true)][ValidatePattern('^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$')][string]$Version,
+    [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$Installer,
     [string]$OutputDirectory = "."
 )
 
 $ErrorActionPreference = "Stop"
-$hash = (Get-FileHash -Algorithm SHA256 $Installer).Hash
+$installerPath = (Resolve-Path -LiteralPath $Installer).Path
+$installerName = Split-Path -Leaf $installerPath
+$hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash
 $baseUrl = "https://github.com/hjosugi/yeet/releases/download/v$Version"
 New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
 
@@ -28,7 +30,7 @@ InstallModes:
 - silentWithProgress
 Installers:
 - Architecture: x64
-  InstallerUrl: $baseUrl/$(Split-Path -Leaf $Installer)
+  InstallerUrl: $baseUrl/$installerName
   InstallerSha256: $hash
 ManifestType: installer
 ManifestVersion: 1.10.0

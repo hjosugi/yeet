@@ -10,18 +10,71 @@ Wayland と Windows 向けの、Yoink ライクな軽量ドラッグ＆ドロッ
 
 ![2つのファイルを保持したYeetシェルフ](docs/screenshots/yeet-linux-dark.png)
 
-0.3 は Rust ネイティブ版として、core shelf、file/text/image drop、
-複数選択 drag-out、pin、preview、永続化、settings、clipboard capture、
-single-instance CLI forwarding、multi-monitor strip、`gtk4-layer-shell` と
-GNOME fallback、GlobalShortcuts portal、Linux tray、キーボード操作、日英UIを
-実装しています。
+開発中の main は **v0.4 を対象**にしています。core shelf に加え、Linux と
+Windows の tray、file/URI drop の防御的な処理、成功・cancelを区別する
+drag-out、MIME typeを保持するtext/image snippetを実装済みです。ただし、実装済み
+であることと各compositor/Windows環境での確認済みは区別しています。実機確認状況は
+[compositor matrix](docs/compositors.md)を参照してください。
+
+## Quick start
+
+Nix flakesを利用できるLinuxでは、そのまま起動できます。
+
+```sh
+nix run github:hjosugi/yeet -- --hidden
+```
+
+その他のLinuxではGTK 4と`gtk4-layer-shell`を先に導入し、下記の
+[release archive](#linux-へインストール)または[source build](#ソースからビルド)を
+利用します。edge strip非対応環境では`yeet --toggle`を使用してください。
+
+Windowsでは[Releases](https://github.com/hjosugi/yeet/releases)からsetup EXE
+またはportable ZIPを取得して起動し、既定のCtrl+Alt+Yまたは通知領域のiconを左click
+して表示します。global shortcutはSettingsから変更でき、同じshortcutを素早く2回
+押すとclipboardを取り込みます。開発版や未署名artifactではSmartScreenが表示される
+場合があります。
+
+## 比較
+
+<!-- markdownlint-disable MD013 -->
+
+| 機能 | Yeet | Yoink (macOS) | DropPoint | dragon |
+| --- | --- | --- | --- | --- |
+| 画面端へのdrag中に表示 | 常駐する細いstrip | 対応 | 手動/shortcut | CLI起動 |
+| Wayland native統合 | `gtk4-layer-shell`＋fallback | 対象外 | Chromium/Wayland | GTK 3、X11中心 |
+| Windows対応 | 同じRust codebaseのnative backend | 非対応 | Electron版あり | 非対応 |
+| 複数itemのdrag-out | 対応 | 対応 | 対応 | 対応 |
+| text/image snippet | MIME typeを保持 | 対応 | 非対応 | 非対応 |
+| 空になったとき自動で隠す | 対応 | 対応 | 非対応 | 終了optionあり |
+
+<!-- markdownlint-enable MD013 -->
+
+この表は製品の方向性を比較したもので、性能benchmarkや全環境での動作保証では
+ありません。
+
+## v0.4 対象の主な機能
+
+- file、folder、URI list、text、imageをdropできます。local pathを正規化し、browser
+  由来のHTTP(S) URIは明示的なshortcutとして保持し、未対応・利用不能なURIは
+  壊れたitemとして黙って追加せず報告します。
+- accepted dropでのみ未pin itemを削除し、Esc、無効なdrop先、cancelでは保持します。
+- text/image snippetは保存したMIME typeをdrag-out時にも提示し、file list fallbackも
+  同時に提供します。
+- Linux StatusNotifierとWindows native notification-areaのtray menuから、表示、
+  clipboard取込、clear、settings、終了を操作できます。
+- Windowsのtray iconはitem数をtooltipへ表示し、左clickでshelfを切り替えます。
+- Windowsのglobal shortcutは既定のCtrl+Alt+Yから変更できます。登録が競合した場合は
+  Settingsへ明確なerrorを表示し、可能なら以前のshortcutを復元します。変更後も同じ
+  shortcutのdouble pressでclipboardを取り込みます。
+- multi-monitor strip、永続化、preview、日英UI、keyboard操作、theme、autostartを
+  同じRust/GTK 4実装で提供します。
 
 ## Linux へインストール
 
 現在のリリースアーカイブをダウンロードし、`/usr/local` へインストールします。
 
 ```sh
-version=0.3.0
+version=0.4.0
 base="https://github.com/hjosugi/yeet/releases/download/v${version}"
 curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
 curl -fLO "$base/SHA256SUMS-linux.txt"
@@ -52,7 +105,8 @@ CIと同じ固定バージョンをupstreamからインストールします。
 ```sh
 sudo apt update
 sudo apt install libgtk-4-dev libwayland-dev wayland-protocols meson ninja-build
-git clone --depth 1 --branch v1.3.0 https://github.com/wmww/gtk4-layer-shell.git /tmp/gtk4-layer-shell
+git clone --depth 1 --branch v1.3.0 \
+  https://github.com/wmww/gtk4-layer-shell.git /tmp/gtk4-layer-shell
 meson setup /tmp/gtk4-layer-shell/build /tmp/gtk4-layer-shell \
   --prefix=/usr/local -Dexamples=false -Ddocs=false -Dtests=false \
   -Dintrospection=false -Dvapi=false
@@ -85,7 +139,12 @@ fallback になり、edge strip は表示されません。compositor の keybin
 `yeet --toggle` を登録してください。
 
 Windows では shelf と edge strip の両方へ `HWND_TOPMOST` を適用し、shelf を
-再表示するたびに topmost を再設定します。global toggle は Ctrl+Alt+Y です。
+再表示するたびに topmost を再設定します。global toggle の既定値は Ctrl+Alt+Y で、
+Settingsから変更できます。
+
+これらのWindows native pathはtarget buildで型検査していますが、tray操作、shortcut
+競合時のrollback、実際のfocus/display変更後も最前面を維持することは実Windows環境で
+引き続き確認が必要です。確認項目は[Windows の制約](docs/windows.md)にまとめています。
 
 CLI:
 
@@ -97,4 +156,6 @@ yeet --hidden  非表示で起動
 ```
 
 詳細な確認項目は [Wayland compositor matrix](docs/compositors.md) と
-[Windows の制約](docs/windows.md) を参照してください。
+[Windows の制約](docs/windows.md) を参照してください。README用mediaを更新する場合は
+[再現可能なcapture手順](docs/demo-capture.md)に従い、未撮影項目をmockupで埋めないで
+ください。

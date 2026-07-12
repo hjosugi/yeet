@@ -14,6 +14,10 @@ pub struct ShelfItem {
     pub pinned: bool,
     #[serde(default)]
     pub managed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_uri: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
 }
 
 impl ShelfItem {
@@ -25,6 +29,25 @@ impl ShelfItem {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| self.path.display().to_string())
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AddReport {
+    pub added: usize,
+    pub duplicates: Vec<PathBuf>,
+    pub rejected: usize,
+}
+
+impl AddReport {
+    pub fn merge(&mut self, other: Self) {
+        self.added += other.added;
+        self.rejected += other.rejected;
+        for path in other.duplicates {
+            if !self.duplicates.contains(&path) {
+                self.duplicates.push(path);
+            }
+        }
     }
 }
 
@@ -82,18 +105,37 @@ impl ShelfModel {
     where
         I: IntoIterator<Item = PathBuf>,
     {
+        Ok(self.add_paths_report(paths)?.added)
+    }
+
+    pub fn add_paths_report<I>(&mut self, paths: I) -> io::Result<AddReport>
+    where
+        I: IntoIterator<Item = PathBuf>,
+    {
         let mut known: HashSet<PathBuf> = self
             .items
             .iter()
             .map(|item| comparison_path(&item.path))
             .collect();
-        let mut added = 0;
+        let mut report = AddReport::default();
 
         for path in paths {
             let Some(path) = normalize_existing_path(&path) else {
+                report.rejected += 1;
                 continue;
             };
-            if !known.insert(comparison_path(&path)) {
+            let identity = comparison_path(&path);
+            if !known.insert(identity.clone()) {
+                if let Some(existing) = self
+                    .items
+                    .iter()
+                    .find(|item| comparison_path(&item.path) == identity)
+                {
+                    report.duplicates.push(existing.path.clone());
+                } else if !report.duplicates.contains(&path) {
+                    // The duplicate may have been inserted earlier in this same batch.
+                    report.duplicates.push(path);
+                }
                 continue;
             }
             self.items.insert(
@@ -103,25 +145,31 @@ impl ShelfModel {
                     name: None,
                     pinned: false,
                     managed: false,
+                    source_uri: None,
+                    mime_type: None,
                 },
             );
-            added += 1;
+            report.added += 1;
         }
 
-        if added > 0 {
+        if report.added > 0 {
             self.save()?;
         }
-        Ok(added)
+        Ok(report)
     }
 
     pub fn remove(&mut self, index: usize) -> io::Result<Option<ShelfItem>> {
         if index >= self.items.len() {
             return Ok(None);
         }
-        let item = self.items.remove(index);
-        if item.managed {
-            let _ = fs::remove_file(&item.path);
+        let item = self.items[index].clone();
+        if item.managed
+            && let Err(error) = fs::remove_file(&item.path)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            return Err(error);
         }
+        self.items.remove(index);
         self.save()?;
         Ok(Some(item))
     }
@@ -200,6 +248,8 @@ impl ShelfModel {
                 name: Some(name),
                 pinned: false,
                 managed: true,
+                source_uri: None,
+                mime_type: Some("text/plain".to_owned()),
             },
         );
         self.save()?;
@@ -223,6 +273,15 @@ impl ShelfModel {
     }
 
     pub fn add_managed_path(&mut self, path: PathBuf, name: String) -> io::Result<bool> {
+        self.add_managed_path_with_mime(path, name, None)
+    }
+
+    pub fn add_managed_path_with_mime(
+        &mut self,
+        path: PathBuf,
+        name: String,
+        mime_type: Option<String>,
+    ) -> io::Result<bool> {
         if !path.exists() {
             return Ok(false);
         }
@@ -233,6 +292,8 @@ impl ShelfModel {
                 name: Some(name),
                 pinned: false,
                 managed: true,
+                source_uri: None,
+                mime_type,
             },
         );
         self.save()?;
@@ -240,13 +301,42 @@ impl ShelfModel {
     }
 
     pub fn add_remote_uri(&mut self, uri: &str) -> io::Result<bool> {
-        if !(uri.starts_with("https://") || uri.starts_with("http://")) {
-            return Ok(false);
+        Ok(self.add_remote_uri_report(uri)?.added > 0)
+    }
+
+    pub fn add_remote_uri_report(&mut self, uri: &str) -> io::Result<AddReport> {
+        let uri = uri.trim();
+        if !is_web_uri(uri) {
+            return Ok(AddReport {
+                rejected: 1,
+                ..AddReport::default()
+            });
+        }
+        if let Some(item) = self.items.iter().find(|item| remote_uri_matches(item, uri)) {
+            return Ok(AddReport {
+                duplicates: vec![item.path.clone()],
+                ..AddReport::default()
+            });
         }
         let path = self.managed_path("url")?;
         fs::write(&path, format!("[InternetShortcut]\nURL={uri}\n"))?;
         let name = uri.chars().take(80).collect();
-        self.add_managed_path(path, name)
+        self.items.insert(
+            0,
+            ShelfItem {
+                path,
+                name: Some(name),
+                pinned: false,
+                managed: true,
+                source_uri: Some(uri.to_owned()),
+                mime_type: None,
+            },
+        );
+        self.save()?;
+        Ok(AddReport {
+            added: 1,
+            ..AddReport::default()
+        })
     }
 
     pub fn toggle_pinned(&mut self, index: usize) -> io::Result<bool> {
@@ -274,6 +364,34 @@ impl ShelfModel {
         }
         fs::rename(temporary, path)
     }
+}
+
+fn is_web_uri(uri: &str) -> bool {
+    uri.get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
+        || uri
+            .get(..8)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
+}
+
+fn remote_uri_matches(item: &ShelfItem, uri: &str) -> bool {
+    if item.source_uri.as_deref() == Some(uri) {
+        return true;
+    }
+    if !item.managed
+        || !item
+            .path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("url"))
+    {
+        return false;
+    }
+    fs::read_to_string(&item.path).is_ok_and(|contents| {
+        contents.lines().any(|line| {
+            line.strip_prefix("URL=")
+                .is_some_and(|stored| stored.trim() == uri)
+        })
+    })
 }
 
 fn normalize_existing_path(path: &Path) -> Option<PathBuf> {
@@ -321,6 +439,58 @@ mod tests {
 
         assert_eq!(added, 1);
         assert_eq!(model.items().len(), 1);
+    }
+
+    #[test]
+    fn add_report_identifies_duplicate_files_and_accepts_directories() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("one.txt");
+        let folder = directory.path().join("folder");
+        fs::write(&file, "one").unwrap();
+        fs::create_dir(&folder).unwrap();
+        let mut model = ShelfModel::in_memory();
+
+        let report = model
+            .add_paths_report([
+                file.clone(),
+                folder.clone(),
+                file,
+                directory.path().join("missing"),
+            ])
+            .unwrap();
+
+        assert_eq!(report.added, 2);
+        assert_eq!(report.duplicates.len(), 1);
+        assert_eq!(report.rejected, 1);
+        assert!(model.items().iter().any(|item| item.path.is_dir()));
+    }
+
+    #[test]
+    fn remote_urls_are_managed_and_report_the_existing_item_on_duplicate() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut model = ShelfModel::empty(directory.path().join("state.json"));
+
+        let first = model
+            .add_remote_uri_report("https://example.com/download?id=1")
+            .unwrap();
+        assert_eq!(first.added, 1);
+        let path = model.items()[0].path.clone();
+        assert_eq!(
+            model.items()[0].source_uri.as_deref(),
+            Some("https://example.com/download?id=1")
+        );
+
+        let duplicate = model
+            .add_remote_uri_report("https://example.com/download?id=1")
+            .unwrap();
+        assert_eq!(duplicate.added, 0);
+        assert_eq!(duplicate.duplicates, vec![path]);
+        assert_eq!(model.items().len(), 1);
+
+        let unsupported = model
+            .add_remote_uri_report("ftp://example.com/file")
+            .unwrap();
+        assert_eq!(unsupported.rejected, 1);
     }
 
     #[test]
@@ -381,8 +551,55 @@ mod tests {
         assert!(model.add_text("hello").unwrap());
         let snippet = model.items()[0].path.clone();
         assert!(snippet.exists());
+        assert_eq!(model.items()[0].mime_type.as_deref(), Some("text/plain"));
 
         model.remove(0).unwrap();
         assert!(!snippet.exists());
+    }
+
+    #[test]
+    fn managed_image_mime_is_persisted_and_file_is_collected() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = directory.path().join("state.json");
+        let mut model = ShelfModel::load(state.clone()).unwrap();
+        let image = model.managed_path("png").unwrap();
+        fs::write(&image, b"png bytes").unwrap();
+
+        assert!(
+            model
+                .add_managed_path_with_mime(
+                    image.clone(),
+                    "Image snippet".to_owned(),
+                    Some("image/png".to_owned()),
+                )
+                .unwrap()
+        );
+        assert_eq!(model.items()[0].mime_type.as_deref(), Some("image/png"));
+        assert_eq!(
+            ShelfModel::load(state).unwrap().items()[0]
+                .mime_type
+                .as_deref(),
+            Some("image/png")
+        );
+
+        model.remove(0).unwrap();
+        assert!(!image.exists());
+    }
+
+    #[test]
+    fn managed_gc_failure_keeps_the_item_for_a_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let managed_directory = directory.path().join("not-a-file");
+        fs::create_dir(&managed_directory).unwrap();
+        let mut model = ShelfModel::in_memory();
+        assert!(
+            model
+                .add_managed_path(managed_directory.clone(), "Managed directory".to_owned())
+                .unwrap()
+        );
+
+        assert!(model.remove(0).is_err());
+        assert_eq!(model.items().len(), 1);
+        assert!(managed_directory.exists());
     }
 }

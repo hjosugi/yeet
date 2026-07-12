@@ -47,7 +47,7 @@ jobs:
           install -Dm644 packaging/linux/io.github.hjosugi.Yeet.metainfo.xml "$root/share/metainfo/io.github.hjosugi.Yeet.metainfo.xml"
           install -Dm644 assets/io.github.hjosugi.Yeet.svg "$root/share/icons/hicolor/scalable/apps/io.github.hjosugi.Yeet.svg"
           install -Dm644 packaging/linux/yeet.1 "$root/share/man/man1/yeet.1"
-          install -Dm644 LICENSE "$root/share/licenses/wayland-yeet/LICENSE"
+          install -Dm644 LICENSE "$root/share/licenses/yeet/LICENSE"
           tar -czf "${root}.tar.gz" "$root"
           sha256sum "${root}.tar.gz" > SHA256SUMS-linux.txt
       - uses: actions/upload-artifact@v4
@@ -83,14 +83,80 @@ jobs:
           ldd target/release/yeet.exe | awk '/\/ucrt64\/bin\/.*\.dll/ { print $3 }' | xargs -r -I{} cp {} "$root/"
           cp -r /ucrt64/lib/gdk-pixbuf-2.0 "$root/lib/gdk-pixbuf-2.0"
           cp -r /ucrt64/share/glib-2.0/schemas "$root/share/glib-2.0/"
-          zip -r "${root}.zip" "$root"
+      - name: Detect optional signing configuration
+        id: signing
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:CERTIFICATE_BASE64)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:CERTIFICATE_PASSWORD)
+          if ($hasCertificate -xor $hasPassword) {
+            throw "Set both WINDOWS_SIGNING_CERTIFICATE_BASE64 and WINDOWS_SIGNING_CERTIFICATE_PASSWORD, or neither."
+          }
+          "enabled=$($hasCertificate.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+      - name: Sign portable executable
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $pfx = Join-Path $env:RUNNER_TEMP "yeet-signing-$([guid]::NewGuid()).pfx"
+          try {
+            $base64 = [regex]::Replace($env:CERTIFICATE_BASE64, '\s', '')
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($base64))
+            $password = ConvertTo-SecureString $env:CERTIFICATE_PASSWORD -AsPlainText -Force
+            ./packaging/windows/Sign-WindowsArtifacts.ps1 `
+              -Path "yeet-$version-windows-x64/yeet.exe" `
+              -CertificatePath $pfx -CertificatePassword $password
+          }
+          finally {
+            Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
+          }
+      - name: Archive portable build
+        shell: msys2 {0}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          zip -r "yeet-${version}-windows-x64.zip" "yeet-${version}-windows-x64"
       - name: Build Windows installer
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
           choco install innosetup --yes --no-progress
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" packaging/windows/yeet.iss
-          ./packaging/windows/New-WingetManifest.ps1 -Version $version -Installer "yeet-$version-windows-x64-setup.exe" -OutputDirectory winget
+      - name: Sign Windows installer
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $pfx = Join-Path $env:RUNNER_TEMP "yeet-signing-$([guid]::NewGuid()).pfx"
+          try {
+            $base64 = [regex]::Replace($env:CERTIFICATE_BASE64, '\s', '')
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($base64))
+            $password = ConvertTo-SecureString $env:CERTIFICATE_PASSWORD -AsPlainText -Force
+            ./packaging/windows/Sign-WindowsArtifacts.ps1 `
+              -Path "yeet-$version-windows-x64-setup.exe" `
+              -CertificatePath $pfx -CertificatePassword $password
+          }
+          finally {
+            Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
+          }
+      - name: Generate and validate winget submission
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $installer = "yeet-$version-windows-x64-setup.exe"
+          ./packaging/windows/New-WingetManifest.ps1 -Version $version -Installer $installer -OutputDirectory winget
+          ./packaging/windows/Test-WingetManifest.ps1 -Version $version -ManifestDirectory winget -Installer $installer
+          ./packaging/windows/New-WingetSubmission.ps1 -Version $version -ManifestDirectory winget -OutputDirectory winget-submission
+          Compress-Archive -Path winget-submission/manifests `
+            -DestinationPath "yeet-$version-winget-pkgs.zip" -Force
       - name: Write Windows checksums
         shell: msys2 {0}
         run: sha256sum yeet-*.zip yeet-*-setup.exe > SHA256SUMS-windows.txt

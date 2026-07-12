@@ -14,8 +14,8 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 use wayland_yeet::i18n::{Language, set_language, tr};
-use wayland_yeet::model::ShelfModel;
-use wayland_yeet::settings::{ScreenEdge, Settings, Theme};
+use wayland_yeet::model::{AddReport, ShelfItem, ShelfModel};
+use wayland_yeet::settings::{HotkeyBinding, ScreenEdge, Settings, Theme};
 
 thread_local! {
     static THUMBNAIL_CACHE: RefCell<HashMap<PathBuf, gdk::Texture>> = RefCell::new(HashMap::new());
@@ -38,6 +38,7 @@ pub struct Ui {
     revealer: gtk::Revealer,
     edges: RefCell<Vec<gtk::Window>>,
     selected: RefCell<HashSet<PathBuf>>,
+    global_hotkey: RefCell<Option<platform::GlobalHotkey>>,
     desktop_services: RefCell<Option<DesktopServices>>,
     drag_active: Cell<bool>,
 }
@@ -97,7 +98,6 @@ impl Ui {
         set_button_accessibility(&hide, tr("hide_shelf"), "Escape");
         header.append(&stack_icon);
         header.append(&title);
-        header.append(&count);
         header.append(&hide);
         outer.append(&header);
 
@@ -145,15 +145,20 @@ impl Ui {
         let clipboard = gtk::Button::from_icon_name("edit-paste-symbolic");
         clipboard.add_css_class("flat");
         clipboard.set_tooltip_text(Some(tr("capture_clipboard")));
-        set_button_accessibility(&clipboard, tr("capture_clipboard"), "Ctrl+Alt+Y twice");
+        let clipboard_shortcut = format!("{} twice", settings.global_hotkey);
+        set_button_accessibility(&clipboard, tr("capture_clipboard"), &clipboard_shortcut);
         let preferences = gtk::Button::from_icon_name("emblem-system-symbolic");
         preferences.add_css_class("flat");
         preferences.set_tooltip_text(Some(tr("settings")));
         set_button_accessibility(&preferences, tr("settings"), "");
         footer.append(&mode_label);
+        footer.append(&count);
         footer.append(&clipboard);
         footer.append(&preferences);
         footer.append(&clear);
+        for button in [&hide, &clipboard, &preferences, &clear] {
+            button.add_css_class("touch-target");
+        }
         outer.append(&footer);
         let revealer = gtk::Revealer::builder()
             .child(&outer)
@@ -195,6 +200,7 @@ impl Ui {
             revealer,
             edges: RefCell::new(Vec::new()),
             selected: RefCell::new(HashSet::new()),
+            global_hotkey: RefCell::new(None),
             desktop_services: RefCell::new(None),
             drag_active: Cell::new(false),
         });
@@ -257,7 +263,8 @@ impl Ui {
         {
             let weak = Rc::downgrade(&ui);
             let last_press = Rc::new(Cell::new(None::<Instant>));
-            platform::install_global_hotkey(move || {
+            let shortcut = ui.settings.borrow().global_hotkey.clone();
+            let hotkey = platform::install_global_hotkey(&shortcut, move || {
                 if let Some(ui) = weak.upgrade() {
                     let now = Instant::now();
                     let is_double = last_press
@@ -271,6 +278,8 @@ impl Ui {
                     }
                 }
             });
+            *ui.global_hotkey.borrow_mut() = Some(hotkey);
+            ui.update_hotkey_accessibility();
         }
         {
             let weak = Rc::downgrade(&ui);
@@ -391,6 +400,7 @@ impl Ui {
         let item_count = items.len();
         for (index, item) in items.into_iter().enumerate() {
             let row = gtk::ListBoxRow::new();
+            row.add_css_class("shelf-row");
             row.set_focusable(true);
             row.set_activatable(true);
             row.set_accessible_role(gtk::AccessibleRole::Option);
@@ -426,12 +436,22 @@ impl Ui {
             let remove = gtk::Button::from_icon_name("window-close-symbolic");
             remove.add_css_class("flat");
             set_button_accessibility(&remove, tr("remove_item"), "Delete");
+            let actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+            actions.add_css_class("row-actions");
+            actions.set_accessible_role(gtk::AccessibleRole::Group);
+            actions.update_property(&[gtk::accessible::Property::Label(tr("item_actions"))]);
+            for button in [&preview, &pin, &remove] {
+                button.add_css_class("row-action");
+                actions.append(button);
+            }
+            if self.settings.borrow().reduced_motion {
+                actions.add_css_class("no-motion");
+            }
             content.append(&icon);
             content.append(&name);
-            content.append(&preview);
-            content.append(&pin);
-            content.append(&remove);
+            content.append(&actions);
             row.set_child(Some(&content));
+            attach_row_action_reveal(&row, &actions);
             let accessible_name = if item.pinned {
                 format!("{}, pinned", item.display_name())
             } else {
@@ -729,30 +749,38 @@ impl Ui {
             window.present();
             return;
         }
-        if is_pdf(path)
-            && let Some(preview) = render_pdf_first_page(path)
-        {
-            let picture = gtk::Picture::for_filename(&preview);
-            picture.set_can_shrink(true);
-            picture.set_content_fit(gtk::ContentFit::Contain);
-            picture.update_property(&[gtk::accessible::Property::Label("PDF first-page preview")]);
-            let window = gtk::Window::builder()
-                .title(
-                    path.file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or(tr("preview")),
-                )
-                .default_width(720)
-                .default_height(520)
-                .transient_for(&self.shelf)
-                .child(&picture)
-                .build();
-            window.connect_close_request(move |_| {
-                let _ = fs::remove_file(&preview);
-                glib::Propagation::Proceed
-            });
-            configure_preview_window(&window);
-            window.present();
+        if is_pdf(path) {
+            match render_pdf_first_page(path) {
+                Ok(preview) => {
+                    let picture = gtk::Picture::for_filename(&preview);
+                    picture.set_can_shrink(true);
+                    picture.set_content_fit(gtk::ContentFit::Contain);
+                    picture.update_property(&[gtk::accessible::Property::Label(
+                        "PDF first-page preview",
+                    )]);
+                    let window = gtk::Window::builder()
+                        .title(
+                            path.file_name()
+                                .and_then(|name| name.to_str())
+                                .unwrap_or(tr("preview")),
+                        )
+                        .default_width(720)
+                        .default_height(520)
+                        .transient_for(&self.shelf)
+                        .child(&picture)
+                        .build();
+                    window.connect_destroy(move |_| cleanup_preview_file(&preview));
+                    configure_preview_window(&window);
+                    window.present();
+                }
+                Err(error) => {
+                    eprintln!(
+                        "yeet: PDF preview unavailable for {}: {error}; opening the default app",
+                        path.display()
+                    );
+                    open_path(path);
+                }
+            }
             return;
         }
         if is_text(path) {
@@ -800,12 +828,61 @@ impl Ui {
         open_path(path);
     }
 
-    fn flash_duplicate(&self) {
+    fn flash_duplicates(&self, paths: &[PathBuf]) {
         self.shelf.add_css_class("duplicate");
         let shelf = self.shelf.clone();
+        let rows: Vec<gtk::ListBoxRow> = paths
+            .iter()
+            .filter_map(|path| {
+                self.model
+                    .borrow()
+                    .items()
+                    .iter()
+                    .position(|item| &item.path == path)
+            })
+            .filter_map(|index| self.list.row_at_index(index as i32))
+            .collect();
+        for row in &rows {
+            row.add_css_class("duplicate");
+        }
+        if let Some(path) = paths.first()
+            && let Some(index) = self
+                .model
+                .borrow()
+                .items()
+                .iter()
+                .position(|item| &item.path == path)
+        {
+            self.focus_row_without_selection(index);
+        }
         glib::timeout_add_local_once(Duration::from_millis(450), move || {
             shelf.remove_css_class("duplicate");
+            for row in rows {
+                row.remove_css_class("duplicate");
+            }
         });
+    }
+
+    fn present_drop_report(self: &Rc<Self>, report: AddReport, monitor: Option<&gdk::Monitor>) {
+        if report.rejected > 0 {
+            eprintln!(
+                "yeet: ignored {} unsupported or unavailable dropped URI(s)",
+                report.rejected
+            );
+        }
+        if report.added == 0 && report.duplicates.is_empty() {
+            return;
+        }
+        if !report.duplicates.is_empty() {
+            let mut selected = self.selected.borrow_mut();
+            selected.clear();
+            selected.extend(report.duplicates.iter().cloned());
+        }
+        self.refresh();
+        self.show(monitor);
+        if !report.duplicates.is_empty() {
+            self.flash_duplicates(&report.duplicates);
+        }
     }
 
     fn apply_language(&self) {
@@ -836,12 +913,13 @@ impl Ui {
             .set_tooltip_text(Some(tr("settings")));
         set_button_accessibility(&self.hide_button, tr("hide_shelf"), "Escape");
         set_button_accessibility(&self.clear_button, tr("clear_unpinned"), "");
-        set_button_accessibility(
-            &self.clipboard_button,
-            tr("capture_clipboard"),
-            "Ctrl+Alt+Y twice",
-        );
+        self.update_hotkey_accessibility();
         set_button_accessibility(&self.preferences_button, tr("settings"), "");
+    }
+
+    fn update_hotkey_accessibility(&self) {
+        let shortcut = format!("{} twice", self.settings.borrow().global_hotkey);
+        set_button_accessibility(&self.clipboard_button, tr("capture_clipboard"), &shortcut);
     }
 
     fn capture_clipboard(self: &Rc<Self>) {
@@ -873,7 +951,11 @@ impl Ui {
                 && ui
                     .model
                     .borrow_mut()
-                    .add_managed_path(path, tr("clipboard_image").to_owned())
+                    .add_managed_path_with_mime(
+                        path,
+                        tr("clipboard_image").to_owned(),
+                        Some("image/png".to_owned()),
+                    )
                     .unwrap_or(false)
             {
                 ui.refresh();
@@ -937,6 +1019,30 @@ impl Ui {
         let disabled_outputs = gtk::Entry::new();
         disabled_outputs.set_text(&settings.disabled_outputs.join(", "));
         disabled_outputs.set_placeholder_text(Some("DP-1, HDMI-A-1"));
+        let global_hotkey = gtk::Entry::new();
+        global_hotkey.set_hexpand(true);
+        global_hotkey.set_text(&settings.global_hotkey);
+        global_hotkey.set_placeholder_text(Some("Ctrl+Alt+Y"));
+        global_hotkey.set_tooltip_text(Some(tr("global_hotkey_hint")));
+        let global_hotkey_error = gtk::Label::new(None);
+        global_hotkey_error.set_halign(gtk::Align::Start);
+        global_hotkey_error.set_wrap(true);
+        global_hotkey_error.add_css_class("error");
+        global_hotkey_error.set_visible(false);
+        let apply_global_hotkey = gtk::Button::with_label(tr("apply"));
+        apply_global_hotkey.set_sensitive(HotkeyBinding::parse(&settings.global_hotkey).is_ok());
+        let global_hotkey_control = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        global_hotkey_control.append(&global_hotkey);
+        global_hotkey_control.append(&apply_global_hotkey);
+        if let Some(error) = self
+            .global_hotkey
+            .borrow()
+            .as_ref()
+            .and_then(platform::GlobalHotkey::registration_error)
+        {
+            global_hotkey_error.set_text(&global_hotkey_error_text(error));
+            global_hotkey_error.set_visible(true);
+        }
         add_setting_row(&grid, 0, tr("hide_when_empty"), &auto_hide);
         add_setting_row(&grid, 1, tr("restore_shelf"), &restore);
         add_setting_row(&grid, 2, tr("start_session"), &autostart);
@@ -945,12 +1051,31 @@ impl Ui {
         add_setting_row(&grid, 5, tr("language"), &language);
         add_setting_row(&grid, 6, tr("reduced_motion"), &reduced_motion);
         add_setting_row(&grid, 7, tr("screen_edge"), &edge);
-        add_setting_row(&grid, 8, tr("disabled_outputs"), &disabled_outputs);
+        let disabled_outputs_row = if cfg!(target_os = "windows") {
+            add_setting_row(&grid, 8, tr("global_hotkey"), &global_hotkey_control);
+            grid.attach(&global_hotkey_error, 0, 9, 2, 1);
+            10
+        } else {
+            8
+        };
+        add_setting_row(
+            &grid,
+            disabled_outputs_row,
+            tr("disabled_outputs"),
+            &disabled_outputs,
+        );
         window.set_child(Some(&grid));
 
-        connect_setting(&auto_hide, self, |settings, value| {
-            settings.auto_hide = value
-        });
+        {
+            let ui = self.clone();
+            auto_hide.connect_active_notify(move |switch| {
+                ui.settings.borrow_mut().auto_hide = switch.is_active();
+                ui.save_settings();
+                if switch.is_active() {
+                    ui.hide_if_empty();
+                }
+            });
+        }
         connect_setting(&restore, self, |settings, value| {
             settings.restore_shelf = value
         });
@@ -962,6 +1087,7 @@ impl Ui {
                 ui.revealer
                     .set_transition_duration(if reduced { 0 } else { 180 });
                 ui.save_settings();
+                ui.refresh();
             });
         }
         {
@@ -1001,7 +1127,7 @@ impl Ui {
                     },
                 );
                 ui.save_settings();
-                platform::configure_shelf(&ui.shelf, ui.settings.borrow().edge);
+                platform::update_shelf_placement(&ui.shelf, ui.settings.borrow().edge);
                 ui.rebuild_edges(&ui.app);
             });
         }
@@ -1015,9 +1141,61 @@ impl Ui {
                     .filter(|value| !value.is_empty())
                     .map(ToOwned::to_owned)
                     .collect();
+                ui.settings.borrow_mut().normalize();
                 ui.save_settings();
                 ui.rebuild_edges(&ui.app);
             });
+        }
+        if cfg!(target_os = "windows") {
+            let error_label = global_hotkey_error.clone();
+            let apply_button = apply_global_hotkey.clone();
+            global_hotkey.connect_changed(move |entry| {
+                if let Err(error) = HotkeyBinding::parse(entry.text().as_str()) {
+                    apply_button.set_sensitive(false);
+                    error_label.set_text(&format!("{}: {error}", tr("global_hotkey_invalid")));
+                    error_label.set_visible(true);
+                } else {
+                    apply_button.set_sensitive(true);
+                    error_label.set_text("");
+                    error_label.set_visible(false);
+                }
+            });
+
+            let ui = self.clone();
+            let error_label = global_hotkey_error.clone();
+            let entry = global_hotkey.clone();
+            apply_global_hotkey.connect_clicked(move |_| {
+                let result = ui
+                    .global_hotkey
+                    .borrow_mut()
+                    .as_mut()
+                    .ok_or_else(|| {
+                        platform::GlobalHotkeyError::Unavailable(
+                            "hotkey service was not initialized".to_owned(),
+                        )
+                    })
+                    .and_then(|hotkey| hotkey.rebind(entry.text().as_str()));
+                match result {
+                    Ok(normalized) => {
+                        error_label.set_visible(false);
+                        error_label.set_text("");
+                        if ui.settings.borrow().global_hotkey != normalized {
+                            ui.settings.borrow_mut().global_hotkey = normalized.clone();
+                            ui.save_settings();
+                            ui.update_hotkey_accessibility();
+                        }
+                        if entry.text().as_str() != normalized {
+                            entry.set_text(&normalized);
+                        }
+                    }
+                    Err(error) => {
+                        error_label.set_text(&global_hotkey_error_text(&error));
+                        error_label.set_visible(true);
+                    }
+                }
+            });
+            let apply_global_hotkey = apply_global_hotkey.clone();
+            global_hotkey.connect_activate(move |_| apply_global_hotkey.emit_clicked());
         }
         {
             let ui = self.clone();
@@ -1029,6 +1207,7 @@ impl Ui {
                 };
                 ui.settings.borrow_mut().theme = value;
                 apply_theme(value);
+                ui.refresh_native_theme();
                 ui.save_settings();
             });
         }
@@ -1059,6 +1238,37 @@ impl Ui {
     fn save_settings(&self) {
         if let Err(error) = self.settings.borrow().save() {
             eprintln!("yeet: settings: {error}");
+        }
+    }
+
+    fn refresh_native_theme(&self) {
+        platform::refresh_window_theme(self.shelf.upcast_ref());
+        for edge in self.edges.borrow().iter() {
+            platform::refresh_window_theme(edge);
+        }
+    }
+}
+
+fn global_hotkey_error_text(error: &platform::GlobalHotkeyError) -> String {
+    match error {
+        platform::GlobalHotkeyError::Invalid(detail) => {
+            format!("{}: {detail}", tr("global_hotkey_invalid"))
+        }
+        platform::GlobalHotkeyError::Conflict {
+            shortcut,
+            previous_restored,
+            ..
+        } => format!(
+            "{}: {shortcut} {}",
+            tr("global_hotkey_conflict"),
+            if *previous_restored {
+                tr("global_hotkey_restored")
+            } else {
+                tr("global_hotkey_rollback_failed")
+            }
+        ),
+        platform::GlobalHotkeyError::Unavailable(detail) => {
+            format!("{} {detail}", tr("global_hotkey_unavailable"))
         }
     }
 }
@@ -1138,14 +1348,27 @@ fn add_drag_source(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, source_path: Opt
             let file_list = gdk::FileList::from_array(&files);
             let mut providers = vec![gdk::ContentProvider::for_value(&file_list.to_value())];
             if let [path] = paths.as_slice() {
-                if is_text(path)
-                    && let Ok(text) = fs::read_to_string(path)
+                let item = ui
+                    .model
+                    .borrow()
+                    .items()
+                    .iter()
+                    .find(|item| &item.path == path)
+                    .cloned();
+                if let Some(item) = item
+                    && let Ok(Some(payload)) = snippet_drag_payload(&item)
                 {
-                    providers.push(gdk::ContentProvider::for_value(&text.to_value()));
-                } else if is_image(path)
-                    && let Ok(texture) = gdk::Texture::from_filename(path)
-                {
-                    providers.push(gdk::ContentProvider::for_value(&texture.to_value()));
+                    let bytes = glib::Bytes::from_owned(payload.bytes);
+                    providers.push(gdk::ContentProvider::for_bytes(&payload.mime_type, &bytes));
+                    if payload.mime_type.starts_with("text/")
+                        && let Ok(text) = std::str::from_utf8(bytes.as_ref())
+                    {
+                        providers.push(gdk::ContentProvider::for_value(&text.to_value()));
+                    } else if payload.mime_type.starts_with("image/")
+                        && let Ok(texture) = gdk::Texture::from_bytes(&bytes)
+                    {
+                        providers.push(gdk::ContentProvider::for_value(&texture.to_value()));
+                    }
                 }
             }
             Some(gdk::ContentProvider::new_union(&providers))
@@ -1229,32 +1452,23 @@ fn attach_drop_target(
     {
         let ui = ui.clone();
         let drop_widget = widget.as_ref().clone();
+        let monitor = monitor.clone();
         target.connect_drop(move |_, value, _, _| {
             drop_widget.remove_css_class("drop-active");
             let result = if let Ok(files) = value.get::<gdk::FileList>() {
-                let paths = files
-                    .files()
-                    .into_iter()
-                    .filter_map(|file| file.path())
-                    .collect::<Vec<_>>();
-                ui.model.borrow_mut().add_paths(paths)
+                let payload = DropPayload::from_files(files.files());
+                add_drop_payload(&mut ui.model.borrow_mut(), payload)
             } else if let Ok(text) = value.get::<String>() {
-                let file_paths: Vec<PathBuf> = text
-                    .lines()
-                    .map(str::trim)
-                    .filter(|line| line.starts_with("file://"))
-                    .filter_map(|uri| gio::File::for_uri(uri).path())
-                    .collect();
-                if !file_paths.is_empty() {
-                    ui.model.borrow_mut().add_paths(file_paths)
-                } else if text.trim().starts_with("https://") || text.trim().starts_with("http://")
-                {
+                if let Some(payload) = DropPayload::from_uri_list(&text) {
+                    add_drop_payload(&mut ui.model.borrow_mut(), payload)
+                } else {
                     ui.model
                         .borrow_mut()
-                        .add_remote_uri(text.trim())
-                        .map(usize::from)
-                } else {
-                    ui.model.borrow_mut().add_text(&text).map(usize::from)
+                        .add_text(&text)
+                        .map(|added| AddReport {
+                            added: usize::from(added),
+                            ..AddReport::default()
+                        })
                 }
             } else if let Ok(texture) = value.get::<gdk::Texture>() {
                 let path = match ui.model.borrow().managed_path("png") {
@@ -1270,19 +1484,21 @@ fn attach_drop_target(
                 }
                 ui.model
                     .borrow_mut()
-                    .add_managed_path(path, tr("image_snippet").to_owned())
-                    .map(usize::from)
+                    .add_managed_path_with_mime(
+                        path,
+                        tr("image_snippet").to_owned(),
+                        Some("image/png".to_owned()),
+                    )
+                    .map(|added| AddReport {
+                        added: usize::from(added),
+                        ..AddReport::default()
+                    })
             } else {
                 return false;
             };
             match result {
-                Ok(changed) => {
-                    if changed > 0 {
-                        ui.refresh();
-                        ui.show(None);
-                    } else {
-                        ui.flash_duplicate();
-                    }
+                Ok(report) => {
+                    ui.present_drop_report(report, monitor.as_ref());
                     true
                 }
                 Err(error) => {
@@ -1293,6 +1509,93 @@ fn attach_drop_target(
         });
     }
     widget.add_controller(target);
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
+struct DropPayload {
+    paths: Vec<PathBuf>,
+    remote_uris: Vec<String>,
+    rejected: usize,
+}
+
+impl DropPayload {
+    fn from_files(files: Vec<gio::File>) -> Self {
+        let mut payload = Self::default();
+        for file in files {
+            // GTK resolves completed file promises to local paths. Browser HTTP(S)
+            // references remain lightweight shortcuts; other remote schemes are
+            // counted as rejected instead of being silently treated as local files.
+            if let Some(path) = file.path() {
+                payload.paths.push(path);
+                continue;
+            }
+            payload.push_uri(file.uri().as_str());
+        }
+        payload
+    }
+
+    fn from_uri_list(text: &str) -> Option<Self> {
+        let mut payload = Self::default();
+        let mut found_uri = false;
+        for line in text.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if !looks_like_uri(line) {
+                return None;
+            }
+            found_uri = true;
+            payload.push_uri(line);
+        }
+        found_uri.then_some(payload)
+    }
+
+    fn push_uri(&mut self, uri: &str) {
+        if uri
+            .get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file://"))
+        {
+            if let Some(path) = gio::File::for_uri(uri).path() {
+                self.paths.push(path);
+            } else {
+                self.rejected += 1;
+            }
+        } else if is_web_uri(uri) {
+            self.remote_uris.push(uri.to_owned());
+        } else {
+            self.rejected += 1;
+        }
+    }
+}
+
+fn add_drop_payload(model: &mut ShelfModel, payload: DropPayload) -> std::io::Result<AddReport> {
+    let mut report = model.add_paths_report(payload.paths)?;
+    report.rejected += payload.rejected;
+    for uri in payload.remote_uris {
+        report.merge(model.add_remote_uri_report(&uri)?);
+    }
+    Ok(report)
+}
+
+fn looks_like_uri(value: &str) -> bool {
+    let Some((scheme, remainder)) = value.split_once(':') else {
+        return false;
+    };
+    !remainder.is_empty()
+        && !scheme.is_empty()
+        && scheme.bytes().enumerate().all(|(index, byte)| match byte {
+            b'a'..=b'z' | b'A'..=b'Z' => true,
+            b'0'..=b'9' | b'+' | b'-' | b'.' => index > 0,
+            _ => false,
+        })
+}
+
+fn is_web_uri(uri: &str) -> bool {
+    uri.get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
+        || uri
+            .get(..8)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
 }
 
 fn install_keyboard(ui: &Rc<Ui>) {
@@ -1407,6 +1710,53 @@ fn set_button_accessibility(button: &gtk::Button, label: &str, shortcuts: &str) 
     }
 }
 
+fn attach_row_action_reveal(row: &gtk::ListBoxRow, actions: &gtk::Box) {
+    let hovered = Rc::new(Cell::new(false));
+    let focused = Rc::new(Cell::new(false));
+
+    let motion = gtk::EventControllerMotion::new();
+    {
+        let actions = actions.clone();
+        let hovered = hovered.clone();
+        motion.connect_enter(move |_, _, _| {
+            hovered.set(true);
+            actions.add_css_class("actions-revealed");
+        });
+    }
+    {
+        let actions = actions.clone();
+        let hovered = hovered.clone();
+        let focused = focused.clone();
+        motion.connect_leave(move |_| {
+            hovered.set(false);
+            if !focused.get() {
+                actions.remove_css_class("actions-revealed");
+            }
+        });
+    }
+    row.add_controller(motion);
+
+    let focus = gtk::EventControllerFocus::new();
+    {
+        let actions = actions.clone();
+        let focused = focused.clone();
+        focus.connect_enter(move |_| {
+            focused.set(true);
+            actions.add_css_class("actions-revealed");
+        });
+    }
+    {
+        let actions = actions.clone();
+        focus.connect_leave(move |_| {
+            focused.set(false);
+            if !hovered.get() {
+                actions.remove_css_class("actions-revealed");
+            }
+        });
+    }
+    row.add_controller(focus);
+}
+
 fn configure_preview_window(window: &gtk::Window) {
     window.set_accessible_role(gtk::AccessibleRole::Dialog);
     window.update_property(&[
@@ -1516,6 +1866,7 @@ fn attach_context_menu(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, path: PathBu
     let clear = gtk::Button::with_label(tr("clear_unpinned"));
     for button in [&open, &reveal, &copy, &remove, &clear] {
         button.add_css_class("flat");
+        button.add_css_class("context-action");
         menu.append(button);
     }
     popover.set_child(Some(&menu));
@@ -1565,12 +1916,20 @@ fn attach_context_menu(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, path: PathBu
     }
     let click = gtk::GestureClick::new();
     click.set_button(gdk::BUTTON_SECONDARY);
+    let popover_for_click = popover.clone();
     click.connect_pressed(move |gesture, _, x, y| {
+        popover_for_click.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover_for_click.popup();
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+    });
+    widget.add_controller(click);
+    let long_press = gtk::GestureLongPress::new();
+    long_press.connect_pressed(move |gesture, x, y| {
         popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
         popover.popup();
         gesture.set_state(gtk::EventSequenceState::Claimed);
     });
-    widget.add_controller(click);
+    widget.add_controller(long_press);
 }
 
 fn open_path(path: &Path) {
@@ -1625,27 +1984,95 @@ fn is_pdf(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
 }
 
-fn render_pdf_first_page(path: &Path) -> Option<PathBuf> {
+#[derive(Debug, Eq, PartialEq)]
+struct MimePayload {
+    mime_type: String,
+    bytes: Vec<u8>,
+}
+
+fn snippet_drag_payload(item: &ShelfItem) -> std::io::Result<Option<MimePayload>> {
+    let mime_type = item
+        .mime_type
+        .clone()
+        .or_else(|| legacy_snippet_mime_type(item));
+    let Some(mime_type) = mime_type else {
+        return Ok(None);
+    };
+    Ok(Some(MimePayload {
+        mime_type,
+        bytes: fs::read(&item.path)?,
+    }))
+}
+
+fn legacy_snippet_mime_type(item: &ShelfItem) -> Option<String> {
+    if !item.managed {
+        return None;
+    }
+    let extension = item.path.extension()?.to_str()?;
+    if extension.eq_ignore_ascii_case("txt") {
+        Some("text/plain".to_owned())
+    } else if extension.eq_ignore_ascii_case("png") {
+        Some("image/png".to_owned())
+    } else {
+        None
+    }
+}
+
+fn render_pdf_first_page(path: &Path) -> std::io::Result<PathBuf> {
+    render_pdf_first_page_with(path, |path, base| {
+        std::process::Command::new("pdftoppm")
+            .args([
+                "-f",
+                "1",
+                "-l",
+                "1",
+                "-singlefile",
+                "-scale-to",
+                "1400",
+                "-png",
+            ])
+            .arg(path)
+            .arg(base)
+            .status()
+            .map(|status| status.success())
+    })
+}
+
+fn render_pdf_first_page_with(
+    path: &Path,
+    renderer: impl FnOnce(&Path, &Path) -> std::io::Result<bool>,
+) -> std::io::Result<PathBuf> {
     let directory = std::env::temp_dir().join("yeet/previews");
-    fs::create_dir_all(&directory).ok()?;
+    fs::create_dir_all(&directory)?;
     let base = directory.join(format!("preview-{}", Uuid::new_v4()));
-    let status = std::process::Command::new("pdftoppm")
-        .args([
-            "-f",
-            "1",
-            "-l",
-            "1",
-            "-singlefile",
-            "-scale-to",
-            "1400",
-            "-png",
-        ])
-        .arg(path)
-        .arg(&base)
-        .status()
-        .ok()?;
     let preview = base.with_extension("png");
-    (status.success() && preview.exists()).then_some(preview)
+    let rendered = renderer(path, &base);
+    match rendered {
+        Ok(true) if preview.is_file() => Ok(preview),
+        Ok(true) => Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "PDF renderer succeeded without producing a preview image",
+        )),
+        Ok(false) => {
+            cleanup_preview_file(&preview);
+            Err(std::io::Error::other("PDF renderer exited unsuccessfully"))
+        }
+        Err(error) => {
+            cleanup_preview_file(&preview);
+            Err(error)
+        }
+    }
+}
+
+fn cleanup_preview_file(path: &Path) {
+    if let Err(error) = fs::remove_file(path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        eprintln!(
+            "yeet: could not remove preview file {}: {error}",
+            path.display()
+        );
+    }
 }
 
 fn clipboard_is_sensitive(clipboard: &gdk::Clipboard) -> bool {
@@ -1668,10 +2095,16 @@ fn install_css() {
          .yeet-edge:drop(active) { background: alpha(@accent_color, 0.65); }\n\
          .yeet-shelf.drop-active { border: 3px solid @accent_color; background: alpha(@accent_bg_color, 0.16); }\n\
          .yeet-shelf.duplicate { border: 3px solid @warning_color; }\n\
+         .boxed-list row.duplicate { background: alpha(@warning_color, 0.30); outline: 3px solid @warning_color; outline-offset: -3px; }\n\
          .title { font-weight: 800; letter-spacing: 2px; }\n\
          .drag-preview { padding: 8px; border-radius: 10px; background: @theme_bg_color; border: 1px solid @theme_selected_bg_color; }\n\
          .drag-count { min-width: 20px; min-height: 20px; border-radius: 10px; color: @theme_selected_fg_color; background: @theme_selected_bg_color; font-weight: bold; }\n\
          .boxed-list row { border-radius: 8px; margin-bottom: 5px; transition: 160ms ease-in-out; }\n\
+         .row-actions { opacity: 0.42; transition: opacity 160ms ease-in-out; }\n\
+         .row-actions.actions-revealed, .boxed-list row:selected .row-actions { opacity: 1; }\n\
+         .row-actions.no-motion { transition: none; }\n\
+         .row-action, .touch-target { min-width: 44px; min-height: 44px; padding: 8px; }\n\
+         .context-action { min-height: 44px; padding: 8px 12px; }\n\
          .boxed-list row:selected { background: @theme_selected_bg_color; color: @theme_selected_fg_color; }\n\
          .boxed-list row:focus-visible, button:focus-visible, switch:focus-visible, spinbutton:focus-visible, dropdown:focus-visible { outline: 3px solid @theme_selected_bg_color; outline-offset: -3px; }\n\
          .boxed-list row:selected:focus-visible { outline-color: @theme_selected_fg_color; }",
@@ -1738,5 +2171,125 @@ mod tests {
     fn copied_paths_keep_model_order_and_are_line_separated() {
         let paths = [PathBuf::from("first.txt"), PathBuf::from("second.txt")];
         assert_eq!(paths_as_text(&paths), "first.txt\nsecond.txt");
+    }
+
+    #[test]
+    fn uri_list_keeps_multiple_files_directories_and_remote_urls() {
+        let first = gio::File::for_path("/tmp/first file.txt").uri();
+        let directory = gio::File::for_path("/tmp/a-directory").uri();
+        let text = format!(
+            "# text/uri-list comment\r\n{first}\r\n{directory}\r\nhttps://example.com/file.pdf\r\nftp://example.com/unsupported\r\n"
+        );
+
+        let payload = DropPayload::from_uri_list(&text).unwrap();
+
+        assert_eq!(payload.paths.len(), 2);
+        assert_eq!(payload.paths[0], PathBuf::from("/tmp/first file.txt"));
+        assert_eq!(payload.paths[1], PathBuf::from("/tmp/a-directory"));
+        assert_eq!(payload.remote_uris, vec!["https://example.com/file.pdf"]);
+        assert_eq!(payload.rejected, 1);
+    }
+
+    #[test]
+    fn ordinary_text_containing_a_url_remains_a_text_snippet() {
+        assert!(DropPayload::from_uri_list("Download this:\nhttps://example.com/file").is_none());
+    }
+
+    #[test]
+    fn file_like_browser_drop_preserves_remote_uri_without_fetching_it() {
+        let payload =
+            DropPayload::from_files(vec![gio::File::for_uri("https://example.com/archive.zip")]);
+
+        assert!(payload.paths.is_empty());
+        assert_eq!(payload.remote_uris, vec!["https://example.com/archive.zip"]);
+        assert_eq!(payload.rejected, 0);
+    }
+
+    #[test]
+    fn managed_text_drag_payload_preserves_its_mime_and_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("snippet.txt");
+        fs::write(&path, "hello from Yeet").unwrap();
+        let item = ShelfItem {
+            path,
+            name: Some("hello from Yeet".to_owned()),
+            pinned: false,
+            managed: true,
+            source_uri: None,
+            mime_type: Some("text/plain".to_owned()),
+        };
+
+        let payload = snippet_drag_payload(&item).unwrap().unwrap();
+
+        assert_eq!(payload.mime_type, "text/plain");
+        assert_eq!(payload.bytes, b"hello from Yeet");
+    }
+
+    #[test]
+    fn legacy_managed_images_still_drag_as_png() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("snippet.png");
+        fs::write(&path, b"png bytes").unwrap();
+        let item = ShelfItem {
+            path,
+            name: Some("Image snippet".to_owned()),
+            pinned: false,
+            managed: true,
+            source_uri: None,
+            mime_type: None,
+        };
+
+        let payload = snippet_drag_payload(&item).unwrap().unwrap();
+
+        assert_eq!(payload.mime_type, "image/png");
+        assert_eq!(payload.bytes, b"png bytes");
+    }
+
+    #[test]
+    fn pdf_preview_renderer_returns_and_cleans_a_generated_page() {
+        let generated = Rc::new(RefCell::new(None));
+        let generated_for_renderer = generated.clone();
+
+        let preview = render_pdf_first_page_with(Path::new("document.pdf"), move |_, base| {
+            let output = base.with_extension("png");
+            fs::write(&output, b"preview")?;
+            *generated_for_renderer.borrow_mut() = Some(output);
+            Ok(true)
+        })
+        .unwrap();
+
+        assert_eq!(generated.borrow().as_ref(), Some(&preview));
+        assert!(preview.is_file());
+        cleanup_preview_file(&preview);
+        assert!(!preview.exists());
+    }
+
+    #[test]
+    fn failed_pdf_preview_removes_partial_output() {
+        let generated = Rc::new(RefCell::new(None));
+        let generated_for_renderer = generated.clone();
+
+        let result = render_pdf_first_page_with(Path::new("document.pdf"), move |_, base| {
+            let output = base.with_extension("png");
+            fs::write(&output, b"partial preview")?;
+            *generated_for_renderer.borrow_mut() = Some(output);
+            Ok(false)
+        });
+
+        assert!(result.is_err());
+        assert!(!generated.borrow().as_ref().unwrap().exists());
+    }
+
+    #[test]
+    fn unavailable_pdf_renderer_is_reported_for_default_app_fallback() {
+        let result = render_pdf_first_page_with(Path::new("DOCUMENT.PDF"), |_, _| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "pdftoppm missing",
+            ))
+        });
+
+        assert!(is_pdf(Path::new("DOCUMENT.PDF")));
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
     }
 }
