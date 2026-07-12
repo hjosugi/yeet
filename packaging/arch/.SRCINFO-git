@@ -1,6 +1,6 @@
 pkgbase = yeet-shelf-git
 	pkgdesc = Native Yoink-style drag-and-drop shelf for Wayland and Windows (git)
-	pkgver = 0.2.0.r0.g0000000
+	pkgver = 0.3.0.r0.gb57e5c0
 	pkgrel = 1
 	url = https://github.com/hjosugi/yeet
 	arch = x86_64
