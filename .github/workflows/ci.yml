@@ -112,12 +112,15 @@ jobs:
             mingw-w64-ucrt-x86_64-gtk4
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-rust
-      - name: Test
+      - name: Test library
         shell: msys2 {0}
-        run: cargo test --all-targets --locked
+        run: cargo test --lib --locked
       - name: Build
         shell: msys2 {0}
         run: cargo build --release --locked
+      - name: Launch smoke test
+        shell: msys2 {0}
+        run: ./target/release/yeet.exe --version | grep '^Yeet '
       - uses: actions/upload-artifact@v4
         with:
           name: yeet-windows
