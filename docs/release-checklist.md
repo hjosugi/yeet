@@ -12,23 +12,24 @@ validation.
 - Inno Setup fallback version
 - English and Japanese install examples
 
-## Must remain pending until the tag exists
+## Completed after tagging v0.4.0
 
-Do not copy hashes or commit IDs from v0.3.0 into a nominal v0.4.0 package.
-After the final commit is tagged, update and verify these together:
+The annotated v0.4.0 tag resolves to
+`e63168656f6e8bb7da774495c2152d71c3bf4236`. The tag-dependent metadata was
+updated and verified together:
 
-- `packaging/arch/PKGBUILD`: set `pkgver=0.4.0`, calculate the SHA-256 of the
-  actual GitHub v0.4.0 source archive, then regenerate `packaging/arch/.SRCINFO`.
-- `packaging/arch/PKGBUILD-git`: regenerate its `pkgver` and `.SRCINFO-git`
-  from the tagged repository rather than predicting the tag commit.
-- `packaging/flatpak/io.github.hjosugi.Yeet.yml`: change the Yeet source tag
-  and commit to the immutable v0.4.0 commit. Regenerate cargo sources if the
-  final lockfile differs, then run a network-disabled Flatpak build.
+- `packaging/arch/PKGBUILD` uses the actual GitHub v0.4.0 source archive SHA-256
+  `055efb7eeb03bbf6459ef1a60f5f8f0843011c74f027275b2feb8f27b356a609`;
+  `.SRCINFO` was regenerated from that PKGBUILD.
+- `packaging/arch/PKGBUILD-git` and `.SRCINFO-git` use the generated version
+  `0.4.0.r0.ge631686` at the tag commit.
+- `packaging/flatpak/io.github.hjosugi.Yeet.yml` pins tag v0.4.0 and its full,
+  immutable commit. The tagged `Cargo.lock` matches the release worktree, so
+  the matching generated cargo sources remain unchanged.
 - Any future fixed-output Nix source hash must be calculated from the final
   source. The current Nix expression consumes the repository `Cargo.lock` and
   has no release-source hash to guess; `flake.lock` pins nixpkgs and is not a
   Yeet release-version field.
 
-Only mark these complete after building the tag artifacts and comparing their
-checksums with the published release. Until then, the existing Arch and Flatpak
-v0.3.0 pins intentionally remain unchanged.
+Do not reuse these hashes or commit IDs for a later release; calculate them from
+that release's tag artifacts.
