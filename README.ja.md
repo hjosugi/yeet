@@ -28,8 +28,10 @@ nix run github:hjosugi/yeet -- --hidden
 [release archive](#linux-へインストール)または[source build](#ソースからビルド)を
 利用します。edge strip非対応環境では`yeet --toggle`を使用してください。
 
-Windowsでは[Releases](https://github.com/hjosugi/yeet/releases)からsetup EXE
-またはportable ZIPを取得して起動し、既定のCtrl+Alt+Yまたは通知領域のiconを左click
+Windowsでは[Scoop](https://scoop.sh)で導入できます
+（`scoop bucket add yeet https://github.com/hjosugi/yeet` のあと `scoop install yeet`）。
+または[Releases](https://github.com/hjosugi/yeet/releases)からsetup EXEまたは
+portable ZIPを取得します。起動後、既定のCtrl+Alt+Yまたは通知領域のiconを左click
 して表示します。global shortcutはSettingsから変更でき、同じshortcutを素早く2回
 押すとclipboardを取り込みます。開発版や未署名artifactではSmartScreenが表示される
 場合があります。
@@ -68,6 +70,37 @@ Windowsでは[Releases](https://github.com/hjosugi/yeet/releases)からsetup EXE
   shortcutのdouble pressでclipboardを取り込みます。
 - multi-monitor strip、永続化、preview、日英UI、keyboard操作、theme、autostartを
   同じRust/GTK 4実装で提供します。
+
+## Windows へインストール
+
+### Scoop（推奨）
+
+[Scoop](https://scoop.sh) はportable buildを導入し、更新も管理します。manifestは
+このリポジトリの [`bucket/`](bucket) にあります。bucketとして追加してinstallします。
+
+```powershell
+scoop bucket add yeet https://github.com/hjosugi/yeet
+scoop install yeet
+```
+
+以降は次のコマンドで最新releaseへ更新します。
+
+```powershell
+scoop update yeet
+```
+
+Scoopはuser profile配下へinstallし（管理者権限は不要）、`scoop uninstall yeet` で
+きれいに削除できます。`%APPDATA%\hjosugi\Yeet` の設定はupdateやuninstallをまたいで
+保持されます。別のbucketにも `yeet` がある場合は `scoop install yeet/yeet` で
+区別します。
+
+### installer または portable ZIP
+
+[Releases](https://github.com/hjosugi/yeet/releases) からsetup EXEまたは
+portable ZIPを取得することもできます。shelfが空のあいだYeetは背景に常駐し
+（通知領域のiconと画面端の細いstrip）、Ctrl+Alt+Y・trayのclick・画面端へのdragで
+呼び出すまでwindowを開きません。SmartScreenや実行時の詳細は
+[Windowsの制約](docs/windows.md)を参照してください。
 
 ## Linux へインストール
 

@@ -1,0 +1,42 @@
+{
+    "$schema": "https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/schema.json",
+    "version": "0.4.0",
+    "description": "A native drag-and-drop shelf for Wayland and Windows (portable Windows build).",
+    "homepage": "https://github.com/hjosugi/yeet",
+    "license": "MIT",
+    "notes": [
+        "Launch Yeet, then press Ctrl+Alt+Y (configurable) or left-click the notification-area icon to summon the shelf.",
+        "With an empty shelf Yeet stays in the background (tray icon + screen-edge strip); it does not open a window until summoned.",
+        "Settings live in %APPDATA%\\hjosugi\\Yeet and are kept across updates and uninstalls.",
+        "Release builds are currently unsigned, so SmartScreen may warn on first launch. See https://github.com/hjosugi/yeet/blob/main/docs/windows.md"
+    ],
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/hjosugi/yeet/releases/download/v0.4.0/yeet-0.4.0-windows-x64.zip",
+            "hash": "cf5e19aaa2452ba50fac801f78641204cfc02e1ef0a13ad71f1b5191e467da98",
+            "extract_dir": "yeet-0.4.0-windows-x64"
+        }
+    },
+    "bin": "yeet.exe",
+    "shortcuts": [
+        [
+            "yeet.exe",
+            "Yeet"
+        ]
+    ],
+    "checkver": {
+        "github": "https://github.com/hjosugi/yeet"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/hjosugi/yeet/releases/download/v$version/yeet-$version-windows-x64.zip",
+                "extract_dir": "yeet-$version-windows-x64"
+            }
+        },
+        "hash": {
+            "url": "$baseurl/SHA256SUMS-windows.txt",
+            "regex": "$sha256\\s+\\*?$basename"
+        }
+    }
+}
