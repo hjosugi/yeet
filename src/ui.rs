@@ -37,7 +37,7 @@ pub struct Ui {
     preferences_button: gtk::Button,
     revealer: gtk::Revealer,
     edges: RefCell<Vec<gtk::Window>>,
-    selected: RefCell<HashSet<PathBuf>>,
+    selected: RefCell<HashSet<Uuid>>,
     global_hotkey: RefCell<Option<platform::GlobalHotkey>>,
     desktop_services: RefCell<Option<DesktopServices>>,
     drag_active: Cell<bool>,
@@ -176,10 +176,11 @@ impl Ui {
             .map(|dirs| dirs.data_local_dir().join("shelf.json"))
             .unwrap_or_else(|| std::env::temp_dir().join("yeet/shelf.json"));
         let model = if settings.restore_shelf {
-            ShelfModel::load(state_path.clone()).unwrap_or_else(|error| {
-                eprintln!("yeet: could not restore shelf: {error}");
-                ShelfModel::empty(state_path)
-            })
+            ShelfModel::load_with_deduplication(state_path.clone(), settings.deduplicate_items)
+                .unwrap_or_else(|error| {
+                    eprintln!("yeet: could not restore shelf: {error}");
+                    ShelfModel::empty(state_path)
+                })
         } else {
             ShelfModel::empty(state_path)
         };
@@ -240,7 +241,7 @@ impl Ui {
                 selected.clear();
                 for row in list.selected_rows() {
                     if let Some(item) = model.items().get(row.index() as usize) {
-                        selected.insert(item.path.clone());
+                        selected.insert(item.id);
                     }
                 }
                 update_selection_accessibility(list);
@@ -314,8 +315,13 @@ impl Ui {
             }
             self.selected.borrow_mut().clear();
         }
-        let added = match self.model.borrow_mut().add_paths(arguments.iter().cloned()) {
-            Ok(added) => added > 0,
+        let deduplicate_items = self.settings.borrow().deduplicate_items;
+        let added = match self
+            .model
+            .borrow_mut()
+            .add_paths_report_with_deduplication(arguments.iter().cloned(), deduplicate_items)
+        {
+            Ok(report) => report.added > 0,
             Err(error) => {
                 eprintln!("yeet: {error:#}");
                 false
@@ -380,7 +386,7 @@ impl Ui {
     }
 
     fn refresh(self: &Rc<Self>) {
-        let focused_path = self.focused_path();
+        let focused_id = self.focused_id();
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
@@ -471,7 +477,7 @@ impl Ui {
                 gtk::accessible::Relation::SetSize(item_count as i32),
             ]);
             self.list.append(&row);
-            if selected_snapshot.contains(&item.path) {
+            if selected_snapshot.contains(&item.id) {
                 self.list.select_row(Some(&row));
             }
             {
@@ -481,14 +487,14 @@ impl Ui {
             }
             {
                 let ui = self.clone();
-                let path = item.path.clone();
+                let id = item.id;
                 pin.connect_clicked(move |_| {
                     let index = ui
                         .model
                         .borrow()
                         .items()
                         .iter()
-                        .position(|item| item.path == path);
+                        .position(|item| item.id == id);
                     let result = index
                         .map(|index| ui.model.borrow_mut().toggle_pinned(index))
                         .transpose();
@@ -500,38 +506,38 @@ impl Ui {
             }
             {
                 let ui = self.clone();
-                let path = item.path.clone();
+                let id = item.id;
                 remove.connect_clicked(move |_| {
                     let index = ui
                         .model
                         .borrow()
                         .items()
                         .iter()
-                        .position(|item| item.path == path);
+                        .position(|item| item.id == id);
                     let result = index
                         .map(|index| ui.model.borrow_mut().remove(index))
                         .transpose();
                     if let Err(error) = result {
                         eprintln!("yeet: {error:#}");
                     }
-                    ui.selected.borrow_mut().remove(&path);
+                    ui.selected.borrow_mut().remove(&id);
                     ui.refresh();
                     ui.hide_if_empty();
                 });
             }
-            attach_context_menu(&content, self, item.path.clone());
-            add_drag_source(&content, self, Some(item.path));
+            attach_context_menu(&content, self, item.id, item.path.clone());
+            add_drag_source(&content, self, Some(item.id));
         }
         update_selection_accessibility(&self.list);
         if self.shelf.is_visible() {
-            let focus_index = focused_path
+            let focus_index = focused_id
                 .as_ref()
-                .and_then(|path| {
+                .and_then(|id| {
                     self.model
                         .borrow()
                         .items()
                         .iter()
-                        .position(|item| &item.path == path)
+                        .position(|item| &item.id == id)
                 })
                 .or_else(|| self.first_selected_index())
                 .unwrap_or(0);
@@ -589,11 +595,11 @@ impl Ui {
     }
 
     fn remove_selected(self: &Rc<Self>) {
-        let mut paths = self.selected_paths();
-        if paths.is_empty()
-            && let Some(path) = self.focused_path()
+        let mut ids: Vec<Uuid> = self.selected.borrow().iter().copied().collect();
+        if ids.is_empty()
+            && let Some(id) = self.focused_id()
         {
-            paths.push(path);
+            ids.push(id);
         }
         let mut indices: Vec<usize> = self
             .model
@@ -601,7 +607,7 @@ impl Ui {
             .items()
             .iter()
             .enumerate()
-            .filter_map(|(index, item)| paths.contains(&item.path).then_some(index))
+            .filter_map(|(index, item)| ids.contains(&item.id).then_some(index))
             .collect();
         let next_focus = indices.iter().min().copied().unwrap_or(0);
         indices.sort_unstable_by(|a, b| b.cmp(a));
@@ -655,7 +661,7 @@ impl Ui {
             .borrow()
             .items()
             .iter()
-            .filter(|item| selected.contains(&item.path))
+            .filter(|item| selected.contains(&item.id))
             .map(|item| item.path.clone())
             .collect()
     }
@@ -687,6 +693,11 @@ impl Ui {
                 .get(index)
                 .map(|item| item.path.clone())
         })
+    }
+
+    fn focused_id(&self) -> Option<Uuid> {
+        self.focused_row_index()
+            .and_then(|index| self.model.borrow().items().get(index).map(|item| item.id))
     }
 
     fn focus_row(&self, index: usize, extend_selection: bool) {
@@ -828,30 +839,30 @@ impl Ui {
         open_path(path);
     }
 
-    fn flash_duplicates(&self, paths: &[PathBuf]) {
+    fn flash_duplicates(&self, ids: &[Uuid]) {
         self.shelf.add_css_class("duplicate");
         let shelf = self.shelf.clone();
-        let rows: Vec<gtk::ListBoxRow> = paths
+        let rows: Vec<gtk::ListBoxRow> = ids
             .iter()
-            .filter_map(|path| {
+            .filter_map(|id| {
                 self.model
                     .borrow()
                     .items()
                     .iter()
-                    .position(|item| &item.path == path)
+                    .position(|item| &item.id == id)
             })
             .filter_map(|index| self.list.row_at_index(index as i32))
             .collect();
         for row in &rows {
             row.add_css_class("duplicate");
         }
-        if let Some(path) = paths.first()
+        if let Some(id) = ids.first()
             && let Some(index) = self
                 .model
                 .borrow()
                 .items()
                 .iter()
-                .position(|item| &item.path == path)
+                .position(|item| &item.id == id)
         {
             self.focus_row_without_selection(index);
         }
@@ -870,18 +881,22 @@ impl Ui {
                 report.rejected
             );
         }
-        if report.added == 0 && report.duplicates.is_empty() {
+        if report.added == 0 && report.duplicate_ids.is_empty() {
             return;
         }
-        if !report.duplicates.is_empty() {
+        if !report.duplicate_ids.is_empty() {
             let mut selected = self.selected.borrow_mut();
             selected.clear();
-            selected.extend(report.duplicates.iter().cloned());
+            selected.extend(report.duplicate_ids.iter().copied());
+        } else if self.settings.borrow().stack_multi_drop && report.added_ids.len() > 1 {
+            let mut selected = self.selected.borrow_mut();
+            selected.clear();
+            selected.extend(report.added_ids.iter().copied());
         }
         self.refresh();
         self.show(monitor);
-        if !report.duplicates.is_empty() {
-            self.flash_duplicates(&report.duplicates);
+        if !report.duplicate_ids.is_empty() {
+            self.flash_duplicates(&report.duplicate_ids);
         }
     }
 
@@ -992,6 +1007,12 @@ impl Ui {
         let restore = gtk::Switch::builder()
             .active(settings.restore_shelf)
             .build();
+        let deduplicate_items = gtk::Switch::builder()
+            .active(settings.deduplicate_items)
+            .build();
+        let stack_multi_drop = gtk::Switch::builder()
+            .active(settings.stack_multi_drop)
+            .build();
         let autostart = gtk::Switch::builder().active(settings.autostart).build();
         let strip = gtk::SpinButton::with_range(3.0, 16.0, 1.0);
         strip.set_value(settings.strip_size.into());
@@ -1045,18 +1066,20 @@ impl Ui {
         }
         add_setting_row(&grid, 0, tr("hide_when_empty"), &auto_hide);
         add_setting_row(&grid, 1, tr("restore_shelf"), &restore);
-        add_setting_row(&grid, 2, tr("start_session"), &autostart);
-        add_setting_row(&grid, 3, tr("edge_width"), &strip);
-        add_setting_row(&grid, 4, tr("theme"), &theme);
-        add_setting_row(&grid, 5, tr("language"), &language);
-        add_setting_row(&grid, 6, tr("reduced_motion"), &reduced_motion);
-        add_setting_row(&grid, 7, tr("screen_edge"), &edge);
+        add_setting_row(&grid, 2, tr("deduplicate_items"), &deduplicate_items);
+        add_setting_row(&grid, 3, tr("stack_multi_drop"), &stack_multi_drop);
+        add_setting_row(&grid, 4, tr("start_session"), &autostart);
+        add_setting_row(&grid, 5, tr("edge_width"), &strip);
+        add_setting_row(&grid, 6, tr("theme"), &theme);
+        add_setting_row(&grid, 7, tr("language"), &language);
+        add_setting_row(&grid, 8, tr("reduced_motion"), &reduced_motion);
+        add_setting_row(&grid, 9, tr("screen_edge"), &edge);
         let disabled_outputs_row = if cfg!(target_os = "windows") {
-            add_setting_row(&grid, 8, tr("global_hotkey"), &global_hotkey_control);
-            grid.attach(&global_hotkey_error, 0, 9, 2, 1);
-            10
+            add_setting_row(&grid, 10, tr("global_hotkey"), &global_hotkey_control);
+            grid.attach(&global_hotkey_error, 0, 11, 2, 1);
+            12
         } else {
-            8
+            10
         };
         add_setting_row(
             &grid,
@@ -1078,6 +1101,12 @@ impl Ui {
         }
         connect_setting(&restore, self, |settings, value| {
             settings.restore_shelf = value
+        });
+        connect_setting(&deduplicate_items, self, |settings, value| {
+            settings.deduplicate_items = value
+        });
+        connect_setting(&stack_multi_drop, self, |settings, value| {
+            settings.stack_multi_drop = value
         });
         {
             let ui = self.clone();
@@ -1304,59 +1333,56 @@ fn apply_theme(theme: Theme) {
     settings.set_gtk_application_prefer_dark_theme(theme == Theme::Dark);
 }
 
-fn add_drag_source(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, source_path: Option<PathBuf>) {
+fn add_drag_source(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, source_id: Option<Uuid>) {
     let source = gtk::DragSource::builder()
         .actions(gdk::DragAction::COPY | gdk::DragAction::MOVE)
         .build();
     let cancelled = Rc::new(Cell::new(false));
-    let active_paths = Rc::new(RefCell::new(Vec::<PathBuf>::new()));
+    let active_items = Rc::new(RefCell::new(Vec::<(Uuid, PathBuf)>::new()));
 
     {
         let ui = ui.clone();
         let cancelled = cancelled.clone();
-        let active_paths = active_paths.clone();
-        let source_path = source_path.clone();
+        let active_items = active_items.clone();
         source.connect_prepare(move |_, _, _| {
             cancelled.set(false);
             let selected = ui.selected.borrow();
-            let paths: Vec<PathBuf> = if let Some(source_path) = &source_path {
-                if selected.contains(source_path) {
-                    ui.model
-                        .borrow()
-                        .items()
-                        .iter()
-                        .filter(|item| selected.contains(&item.path))
-                        .map(|item| item.path.clone())
-                        .collect()
-                } else {
-                    vec![source_path.clone()]
-                }
-            } else {
-                ui.model
-                    .borrow()
+            let model = ui.model.borrow();
+            let items: Vec<(Uuid, PathBuf)> = match source_id {
+                Some(source_id) if selected.contains(&source_id) => model
                     .items()
                     .iter()
-                    .map(|item| item.path.clone())
-                    .collect()
+                    .filter(|item| selected.contains(&item.id))
+                    .map(|item| (item.id, item.path.clone()))
+                    .collect(),
+                Some(source_id) => model
+                    .items()
+                    .iter()
+                    .find(|item| item.id == source_id)
+                    .map(|item| (item.id, item.path.clone()))
+                    .into_iter()
+                    .collect(),
+                None => model
+                    .items()
+                    .iter()
+                    .map(|item| (item.id, item.path.clone()))
+                    .collect(),
             };
-            *active_paths.borrow_mut() = paths.clone();
-            let files: Vec<gio::File> = paths.iter().map(gio::File::for_path).collect();
+            *active_items.borrow_mut() = items.clone();
+            let files: Vec<gio::File> = items
+                .iter()
+                .map(|(_, path)| gio::File::for_path(path))
+                .collect();
             if files.is_empty() {
                 return None;
             }
             ui.drag_active.set(true);
             let file_list = gdk::FileList::from_array(&files);
             let mut providers = vec![gdk::ContentProvider::for_value(&file_list.to_value())];
-            if let [path] = paths.as_slice() {
-                let item = ui
-                    .model
-                    .borrow()
-                    .items()
-                    .iter()
-                    .find(|item| &item.path == path)
-                    .cloned();
+            if let [(id, _)] = items.as_slice() {
+                let item = model.items().iter().find(|item| item.id == *id);
                 if let Some(item) = item
-                    && let Ok(Some(payload)) = snippet_drag_payload(&item)
+                    && let Ok(Some(payload)) = snippet_drag_payload(item)
                 {
                     let bytes = glib::Bytes::from_owned(payload.bytes);
                     providers.push(gdk::ContentProvider::for_bytes(&payload.mime_type, &bytes));
@@ -1382,11 +1408,11 @@ fn add_drag_source(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, source_path: Opt
         });
     }
     {
-        let active_paths = active_paths.clone();
+        let active_items = active_items.clone();
         source.connect_drag_begin(move |_, drag| {
             let icon = gtk::Image::from_icon_name("text-x-generic-symbolic");
             icon.set_pixel_size(32);
-            let count = gtk::Label::new(Some(&active_paths.borrow().len().to_string()));
+            let count = gtk::Label::new(Some(&active_items.borrow().len().to_string()));
             count.add_css_class("drag-count");
             let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
             content.add_css_class("drag-preview");
@@ -1400,12 +1426,13 @@ fn add_drag_source(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, source_path: Opt
         source.connect_drag_end(move |_, drag, _delete_data| {
             ui.drag_active.set(false);
             let accepted = !cancelled.get() && !drag.selected_action().is_empty();
-            let paths = active_paths.borrow().clone();
+            let ids: Vec<Uuid> = active_items.borrow().iter().map(|(id, _)| *id).collect();
             if accepted {
-                match ui.model.borrow_mut().remove_paths_after_drop(&paths) {
+                match ui.model.borrow_mut().remove_ids_after_drop(&ids) {
                     Ok(_) => {
-                        for path in paths {
-                            ui.selected.borrow_mut().remove(&path);
+                        let mut selected = ui.selected.borrow_mut();
+                        for id in ids {
+                            selected.remove(&id);
                         }
                     }
                     Err(error) => eprintln!("yeet: {error:#}"),
@@ -1455,12 +1482,13 @@ fn attach_drop_target(
         let monitor = monitor.clone();
         target.connect_drop(move |_, value, _, _| {
             drop_widget.remove_css_class("drop-active");
+            let deduplicate_items = ui.settings.borrow().deduplicate_items;
             let result = if let Ok(files) = value.get::<gdk::FileList>() {
                 let payload = DropPayload::from_files(files.files());
-                add_drop_payload(&mut ui.model.borrow_mut(), payload)
+                add_drop_payload(&mut ui.model.borrow_mut(), payload, deduplicate_items)
             } else if let Ok(text) = value.get::<String>() {
                 if let Some(payload) = DropPayload::from_uri_list(&text) {
-                    add_drop_payload(&mut ui.model.borrow_mut(), payload)
+                    add_drop_payload(&mut ui.model.borrow_mut(), payload, deduplicate_items)
                 } else {
                     ui.model
                         .borrow_mut()
@@ -1568,11 +1596,15 @@ impl DropPayload {
     }
 }
 
-fn add_drop_payload(model: &mut ShelfModel, payload: DropPayload) -> std::io::Result<AddReport> {
-    let mut report = model.add_paths_report(payload.paths)?;
+fn add_drop_payload(
+    model: &mut ShelfModel,
+    payload: DropPayload,
+    deduplicate_items: bool,
+) -> std::io::Result<AddReport> {
+    let mut report = model.add_paths_report_with_deduplication(payload.paths, deduplicate_items)?;
     report.rejected += payload.rejected;
     for uri in payload.remote_uris {
-        report.merge(model.add_remote_uri_report(&uri)?);
+        report.merge(model.add_remote_uri_report_with_deduplication(&uri, deduplicate_items)?);
     }
     Ok(report)
 }
@@ -1854,7 +1886,7 @@ fn item_icon(path: &Path) -> gtk::Widget {
     image.upcast()
 }
 
-fn attach_context_menu(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, path: PathBuf) {
+fn attach_context_menu(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, id: Uuid, path: PathBuf) {
     let popover = gtk::Popover::new();
     popover.set_has_arrow(true);
     popover.set_parent(widget);
@@ -1893,19 +1925,19 @@ fn attach_context_menu(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, path: PathBu
     }
     {
         let ui = ui.clone();
-        let path = path.clone();
         remove.connect_clicked(move |_| {
             let index = ui
                 .model
                 .borrow()
                 .items()
                 .iter()
-                .position(|item| item.path == path);
+                .position(|item| item.id == id);
             if let Some(index) = index
                 && let Err(error) = ui.model.borrow_mut().remove(index)
             {
                 eprintln!("yeet: {error}");
             }
+            ui.selected.borrow_mut().remove(&id);
             ui.refresh();
             ui.hide_if_empty();
         });
@@ -2211,6 +2243,7 @@ mod tests {
         let path = directory.path().join("snippet.txt");
         fs::write(&path, "hello from Yeet").unwrap();
         let item = ShelfItem {
+            id: Uuid::new_v4(),
             path,
             name: Some("hello from Yeet".to_owned()),
             pinned: false,
@@ -2231,6 +2264,7 @@ mod tests {
         let path = directory.path().join("snippet.png");
         fs::write(&path, b"png bytes").unwrap();
         let item = ShelfItem {
+            id: Uuid::new_v4(),
             path,
             name: Some("Image snippet".to_owned()),
             pinned: false,
