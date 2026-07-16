@@ -32,6 +32,13 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.1" date="2026-07-16">
+      <description>
+        <p>Fixes the Windows portable build failing to start by bundling the
+        GLib gdbus session-bus helper and the gspawn helpers, and adds a Scoop
+        bucket for Windows install and updates.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-07-12">
       <description>
         <p>Adds native Windows tray controls, more defensive file and URI drop
