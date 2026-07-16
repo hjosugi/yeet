@@ -32,6 +32,13 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.0" date="2026-07-16">
+      <description>
+        <p>Gives every shelf item a stable identity of its own, so repeated
+        drops of the same file can be kept apart, and adds settings to keep
+        duplicate items and to select a multi-item drop as a group.</p>
+      </description>
+    </release>
     <release version="0.4.1" date="2026-07-16">
       <description>
         <p>Fixes the Windows portable build failing to start by bundling the

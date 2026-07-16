@@ -1,10 +1,10 @@
 # Release metadata checklist
 
-The source tree targets Yeet 0.4.1. Metadata that does not depend on the final
+The source tree targets Yeet 0.5.0. Metadata that does not depend on the final
 tag is updated before tagging and is checked by `cargo metadata` and AppStream
 validation.
 
-## Complete before tagging v0.4.1
+## Complete before tagging v0.5.0
 
 - Cargo package and lockfile package version
 - Linux man-page header and AppStream release history
@@ -12,12 +12,12 @@ validation.
 - Inno Setup fallback version
 - English and Japanese install examples
 
-## Complete after tagging v0.4.1
+## Complete after tagging v0.5.0
 
 These depend on the final tag and must be calculated from that release's
 artifacts, not guessed or copied from an earlier release:
 
-- `packaging/arch/PKGBUILD` source-archive SHA-256 for `v0.4.1.tar.gz`, then
+- `packaging/arch/PKGBUILD` source-archive SHA-256 for `v0.5.0.tar.gz`, then
   regenerate `.SRCINFO` from it.
 - `packaging/arch/PKGBUILD-git` and `.SRCINFO-git` generated version at the tag
   commit.
