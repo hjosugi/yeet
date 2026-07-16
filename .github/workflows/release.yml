@@ -77,24 +77,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
           test "$version" = "$cargo_version"
-          root="yeet-${version}-windows-x64"
-          mkdir -p "$root/bin" "$root/lib" "$root/share/glib-2.0"
-          cp target/release/yeet.exe "$root/"
-          ldd target/release/yeet.exe | awk '/\/ucrt64\/bin\/.*\.dll/ { print $3 }' | xargs -r -I{} cp {} "$root/"
-          cp -r /ucrt64/lib/gdk-pixbuf-2.0 "$root/lib/gdk-pixbuf-2.0"
-          cp -r /ucrt64/share/glib-2.0/schemas "$root/share/glib-2.0/"
-          # GtkApplication registers on a D-Bus session bus; on Windows GLib
-          # autolaunches one by spawning gdbus.exe. Without it, GIO prints
-          # "win32 session dbus binary not found" and the app fails to start.
-          # The gspawn helpers back GLib process spawning (e.g. opening files or
-          # URIs in the default app via GAppInfo). ldd cannot discover these
-          # standalone executables, so copy them explicitly to keep the portable
-          # bundle self-contained.
-          cp /ucrt64/bin/gdbus.exe "$root/"
-          cp /ucrt64/bin/gspawn-win64-helper.exe "$root/"
-          cp /ucrt64/bin/gspawn-win64-helper-console.exe "$root/"
-          # Fail the release before publishing if the session-bus helper is missing.
-          test -f "$root/gdbus.exe"
+          bash scripts/bundle-windows.sh
       - name: Detect optional signing configuration
         id: signing
         shell: pwsh
