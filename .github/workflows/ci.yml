@@ -120,16 +120,30 @@ jobs:
         run: cargo build --release --locked
       - name: Launch smoke test
         shell: msys2 {0}
+        run: ./target/release/yeet.exe --version | grep '^Yeet '
+      - name: Assemble portable bundle
+        shell: msys2 {0}
+        run: bash scripts/bundle-windows.sh
+      - name: Portable bundle launch test
+        shell: pwsh
         run: |
-          ./target/release/yeet.exe --version | grep '^Yeet '
-          # --version returns before GTK is created, so also exercise the real
-          # GtkApplication/GDK startup path. Yeet holds itself alive with no
-          # shelf mapped, so a clean start keeps running until the timeout (124).
-          set +e
-          GSK_RENDERER=cairo timeout 15s ./target/release/yeet.exe --hidden
-          status=$?
-          set -e
-          test "$status" -eq 124
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
+          $root = Join-Path $PWD "yeet-$version-windows-x64"
+          # Launch the assembled bundle with only the bundle dir and System32 on
+          # PATH, so the app must rely solely on the files we ship (no MSYS2
+          # runtime). This proves the portable ZIP is self-contained: a missing
+          # DLL, gdbus.exe or GTK resource would make yeet.exe exit early.
+          # --version returns before GTK is created, so use --hidden, which keeps
+          # running until we stop it.
+          $env:PATH = "$root;$env:SystemRoot\System32;$env:SystemRoot"
+          $env:GSK_RENDERER = "cairo"
+          $proc = Start-Process -FilePath (Join-Path $root "yeet.exe") -ArgumentList "--hidden" -PassThru
+          Start-Sleep -Seconds 15
+          if ($proc.HasExited) {
+            throw "yeet.exe exited early (code $($proc.ExitCode)); the portable bundle is not self-contained"
+          }
+          Stop-Process -Id $proc.Id -Force
+          Write-Host "Portable bundle launched from a clean PATH and stayed alive."
       - name: Validate winget packaging scripts
         shell: pwsh
         run: |
