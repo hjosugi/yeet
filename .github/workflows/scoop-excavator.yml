@@ -1,0 +1,31 @@
+name: Scoop Excavator
+
+# Keeps the Scoop manifest in bucket/ in sync with the latest GitHub release so
+# `scoop update yeet` always sees new versions with no manual work. The
+# checkver/autoupdate metadata in bucket/yeet.json drives the version, download
+# URL and SHA-256. After publishing a release you can also run this workflow
+# from the Actions tab (workflow_dispatch) for an immediate bump.
+
+on:
+  schedule:
+    - cron: '15 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scoop-excavator
+  cancel-in-progress: false
+
+jobs:
+  excavate:
+    runs-on: windows-latest
+    steps:
+      - name: Check out bucket
+        uses: actions/checkout@v5
+      - name: Update manifests from upstream releases
+        uses: ScoopInstaller/GithubActions@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SKIP_UPDATED: '1'

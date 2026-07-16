@@ -30,8 +30,10 @@ On other Linux distributions, install GTK 4 and `gtk4-layer-shell`, then use
 the [Linux release archive](#install-on-linux) or [build from source](#build-from-source).
 Use `yeet --toggle` if the compositor does not support an edge strip.
 
-On Windows, download the setup EXE or portable ZIP from
-[Releases](https://github.com/hjosugi/yeet/releases), start Yeet, then press
+On Windows, install with [Scoop](https://scoop.sh) —
+`scoop bucket add yeet https://github.com/hjosugi/yeet` then `scoop install yeet`
+— or download the setup EXE or portable ZIP from
+[Releases](https://github.com/hjosugi/yeet/releases). Start Yeet, then press
 Ctrl+Alt+Y (the configurable default) or left-click the notification-area icon.
 Pressing the same shortcut twice quickly captures the clipboard. Development
 and unsigned release artifacts can trigger SmartScreen; see the
@@ -122,6 +124,39 @@ Windows-target compilation covers these native paths, but the tray interactions,
 shortcut conflict/rollback behavior, and topmost behavior across real Windows
 focus/display changes still require the checks in
 [Windows behavior and verification](docs/windows.md).
+
+## Install on Windows
+
+### Scoop (recommended)
+
+[Scoop](https://scoop.sh) installs the portable build and keeps it up to date.
+The manifest lives in this repository's [`bucket/`](bucket) directory, so add the
+repo as a bucket and install:
+
+```powershell
+scoop bucket add yeet https://github.com/hjosugi/yeet
+scoop install yeet
+```
+
+Later, update to the newest release with:
+
+```powershell
+scoop update yeet
+```
+
+Scoop installs into your user profile (no administrator rights required) and
+`scoop uninstall yeet` removes it cleanly. Your settings in
+`%APPDATA%\hjosugi\Yeet` are preserved across updates and uninstalls. If another
+bucket also provides a `yeet`, disambiguate with `scoop install yeet/yeet`.
+
+### Installer or portable ZIP
+
+Alternatively, download the setup EXE or portable ZIP from
+[Releases](https://github.com/hjosugi/yeet/releases). With an empty shelf Yeet
+stays in the background — a notification-area icon plus a thin screen-edge strip
+— and does not open a window until you summon it with Ctrl+Alt+Y, a tray click,
+or a drag against the edge. See the [Windows notes](docs/windows.md) for
+SmartScreen and runtime details.
 
 ## Install on Linux
 
