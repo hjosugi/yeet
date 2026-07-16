@@ -57,6 +57,19 @@ following tray, hotkey, focus, and installer checks remain real-machine work.
 - `yeet --toggle` forwards to the running instance.
 - Portable zip and Inno Setup install/uninstall pass on a clean user account.
 
+## GTK runtime helpers in the portable bundle
+
+`GtkApplication` registers on a D-Bus session bus for single-instance argument
+forwarding (`yeet --toggle`, `yeet FILE...`). On Windows GLib autolaunches that
+bus by spawning `gdbus.exe`; when the helper is missing GIO logs
+`win32 session dbus binary not found` and Yeet fails to start. `ldd` only reports
+the DLLs `yeet.exe` links against, so the release bundling step copies the
+standalone helper executables explicitly. The portable ZIP and installer ship
+`gdbus.exe` plus the GLib `gspawn` helpers (`gspawn-win64-helper.exe`,
+`gspawn-win64-helper-console.exe`) next to `yeet.exe`. When assembling a bundle
+by hand, copy those three files from the GTK runtime's `bin` directory alongside
+`yeet.exe`, otherwise the application will not launch.
+
 ## Integrity-level limitation
 
 Windows User Interface Privilege Isolation blocks OLE drag-and-drop across
