@@ -163,7 +163,7 @@ SmartScreen and runtime details.
 Download the current release archive and install it under `/usr/local`:
 
 ```sh
-version=0.4.1
+version=0.5.0
 base="https://github.com/hjosugi/yeet/releases/download/v${version}"
 curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
 curl -fLO "$base/SHA256SUMS-linux.txt"
