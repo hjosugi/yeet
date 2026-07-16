@@ -180,6 +180,8 @@ pub enum ScreenEdge {
 pub struct Settings {
     pub auto_hide: bool,
     pub restore_shelf: bool,
+    pub deduplicate_items: bool,
+    pub stack_multi_drop: bool,
     pub autostart: bool,
     pub strip_size: i32,
     pub theme: Theme,
@@ -195,6 +197,8 @@ impl Default for Settings {
         Self {
             auto_hide: true,
             restore_shelf: true,
+            deduplicate_items: true,
+            stack_multi_drop: false,
             autostart: false,
             strip_size: 6,
             theme: Theme::System,
@@ -268,6 +272,8 @@ mod tests {
         let settings = Settings::default();
         assert!(settings.auto_hide);
         assert!(settings.restore_shelf);
+        assert!(settings.deduplicate_items);
+        assert!(!settings.stack_multi_drop);
         assert_eq!(settings.strip_size, 6);
         assert_eq!(settings.theme, Theme::System);
         assert_eq!(settings.language, Language::System);
@@ -282,6 +288,8 @@ mod tests {
         let settings: Settings = serde_json::from_str(r#"{"auto_hide":false}"#).unwrap();
         assert!(!settings.auto_hide);
         assert!(settings.restore_shelf);
+        assert!(settings.deduplicate_items);
+        assert!(!settings.stack_multi_drop);
         assert_eq!(settings.strip_size, 6);
         assert_eq!(settings.global_hotkey, DEFAULT_GLOBAL_HOTKEY);
     }
@@ -337,6 +345,8 @@ mod tests {
 
         assert!(!settings.auto_hide);
         assert!(!settings.restore_shelf);
+        assert!(settings.deduplicate_items);
+        assert!(!settings.stack_multi_drop);
         assert_eq!(settings.edge, ScreenEdge::Left);
         assert_eq!(settings.strip_size, 16);
         assert_eq!(settings.disabled_outputs, ["DP-1"]);

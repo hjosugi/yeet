@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ShelfItem {
+    #[serde(default = "Uuid::new_v4")]
+    pub id: Uuid,
     pub path: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -35,7 +37,9 @@ impl ShelfItem {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AddReport {
     pub added: usize,
+    pub added_ids: Vec<Uuid>,
     pub duplicates: Vec<PathBuf>,
+    pub duplicate_ids: Vec<Uuid>,
     pub rejected: usize,
 }
 
@@ -43,9 +47,15 @@ impl AddReport {
     pub fn merge(&mut self, other: Self) {
         self.added += other.added;
         self.rejected += other.rejected;
+        self.added_ids.extend(other.added_ids);
         for path in other.duplicates {
             if !self.duplicates.contains(&path) {
                 self.duplicates.push(path);
+            }
+        }
+        for id in other.duplicate_ids {
+            if !self.duplicate_ids.contains(&id) {
+                self.duplicate_ids.push(id);
             }
         }
     }
@@ -66,6 +76,13 @@ impl ShelfModel {
     }
 
     pub fn load(state_path: PathBuf) -> io::Result<Self> {
+        Self::load_with_deduplication(state_path, true)
+    }
+
+    pub fn load_with_deduplication(
+        state_path: PathBuf,
+        deduplicate_items: bool,
+    ) -> io::Result<Self> {
         if !state_path.exists() {
             return Ok(Self {
                 items: Vec::new(),
@@ -82,7 +99,10 @@ impl ShelfModel {
         if missing_count > 0 {
             eprintln!("yeet: removed {missing_count} missing persisted item(s)");
         }
-        deduplicate(&mut items);
+        ensure_unique_ids(&mut items);
+        if deduplicate_items {
+            deduplicate(&mut items);
+        }
         Ok(Self {
             items,
             state_path: Some(state_path),
@@ -112,11 +132,25 @@ impl ShelfModel {
     where
         I: IntoIterator<Item = PathBuf>,
     {
-        let mut known: HashSet<PathBuf> = self
-            .items
-            .iter()
-            .map(|item| comparison_path(&item.path))
-            .collect();
+        self.add_paths_report_with_deduplication(paths, true)
+    }
+
+    pub fn add_paths_report_with_deduplication<I>(
+        &mut self,
+        paths: I,
+        deduplicate_items: bool,
+    ) -> io::Result<AddReport>
+    where
+        I: IntoIterator<Item = PathBuf>,
+    {
+        let mut known: HashSet<PathBuf> = if deduplicate_items {
+            self.items
+                .iter()
+                .map(|item| comparison_path(&item.path))
+                .collect()
+        } else {
+            HashSet::new()
+        };
         let mut report = AddReport::default();
 
         for path in paths {
@@ -125,22 +159,25 @@ impl ShelfModel {
                 continue;
             };
             let identity = comparison_path(&path);
-            if !known.insert(identity.clone()) {
+            if deduplicate_items && !known.insert(identity.clone()) {
                 if let Some(existing) = self
                     .items
                     .iter()
                     .find(|item| comparison_path(&item.path) == identity)
                 {
                     report.duplicates.push(existing.path.clone());
+                    report.duplicate_ids.push(existing.id);
                 } else if !report.duplicates.contains(&path) {
                     // The duplicate may have been inserted earlier in this same batch.
                     report.duplicates.push(path);
                 }
                 continue;
             }
+            let id = Uuid::new_v4();
             self.items.insert(
                 0,
                 ShelfItem {
+                    id,
                     path,
                     name: None,
                     pinned: false,
@@ -150,6 +187,7 @@ impl ShelfModel {
                 },
             );
             report.added += 1;
+            report.added_ids.push(id);
         }
 
         if report.added > 0 {
@@ -204,6 +242,17 @@ impl ShelfModel {
         self.remove_after_drop(&indices)
     }
 
+    pub fn remove_ids_after_drop(&mut self, ids: &[Uuid]) -> io::Result<usize> {
+        let ids: HashSet<Uuid> = ids.iter().copied().collect();
+        let indices: Vec<usize> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| ids.contains(&item.id).then_some(index))
+            .collect();
+        self.remove_after_drop(&indices)
+    }
+
     pub fn clear_unpinned(&mut self) -> io::Result<usize> {
         let indices: Vec<usize> = self
             .items
@@ -244,6 +293,7 @@ impl ShelfModel {
         self.items.insert(
             0,
             ShelfItem {
+                id: Uuid::new_v4(),
                 path,
                 name: Some(name),
                 pinned: false,
@@ -288,6 +338,7 @@ impl ShelfModel {
         self.items.insert(
             0,
             ShelfItem {
+                id: Uuid::new_v4(),
                 path,
                 name: Some(name),
                 pinned: false,
@@ -305,6 +356,14 @@ impl ShelfModel {
     }
 
     pub fn add_remote_uri_report(&mut self, uri: &str) -> io::Result<AddReport> {
+        self.add_remote_uri_report_with_deduplication(uri, true)
+    }
+
+    pub fn add_remote_uri_report_with_deduplication(
+        &mut self,
+        uri: &str,
+        deduplicate_items: bool,
+    ) -> io::Result<AddReport> {
         let uri = uri.trim();
         if !is_web_uri(uri) {
             return Ok(AddReport {
@@ -312,18 +371,23 @@ impl ShelfModel {
                 ..AddReport::default()
             });
         }
-        if let Some(item) = self.items.iter().find(|item| remote_uri_matches(item, uri)) {
+        if deduplicate_items
+            && let Some(item) = self.items.iter().find(|item| remote_uri_matches(item, uri))
+        {
             return Ok(AddReport {
                 duplicates: vec![item.path.clone()],
+                duplicate_ids: vec![item.id],
                 ..AddReport::default()
             });
         }
         let path = self.managed_path("url")?;
         fs::write(&path, format!("[InternetShortcut]\nURL={uri}\n"))?;
         let name = uri.chars().take(80).collect();
+        let id = Uuid::new_v4();
         self.items.insert(
             0,
             ShelfItem {
+                id,
                 path,
                 name: Some(name),
                 pinned: false,
@@ -335,6 +399,7 @@ impl ShelfModel {
         self.save()?;
         Ok(AddReport {
             added: 1,
+            added_ids: vec![id],
             ..AddReport::default()
         })
     }
@@ -419,7 +484,23 @@ fn comparison_path(path: &Path) -> PathBuf {
 
 fn deduplicate(items: &mut Vec<ShelfItem>) {
     let mut known = HashSet::new();
-    items.retain(|item| known.insert(comparison_path(&item.path)));
+    items.retain(|item| {
+        let identity = item
+            .source_uri
+            .as_ref()
+            .map(|uri| format!("uri:{uri}"))
+            .unwrap_or_else(|| format!("path:{}", comparison_path(&item.path).display()));
+        known.insert(identity)
+    });
+}
+
+fn ensure_unique_ids(items: &mut [ShelfItem]) {
+    let mut known = HashSet::new();
+    for item in items {
+        while !known.insert(item.id) {
+            item.id = Uuid::new_v4();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -541,6 +622,82 @@ mod tests {
         assert_eq!(model.remove_paths_after_drop(&[first, second]).unwrap(), 1);
         assert_eq!(model.items().len(), 1);
         assert!(model.items()[0].pinned);
+    }
+
+    #[test]
+    fn ids_are_stable_drag_identities_and_keep_pinned_items() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("first");
+        let second = directory.path().join("second");
+        fs::write(&first, "first").unwrap();
+        fs::write(&second, "second").unwrap();
+        let mut model = ShelfModel::in_memory();
+        model.add_paths([first, second]).unwrap();
+        model.toggle_pinned(0).unwrap();
+        let ids: Vec<Uuid> = model.items().iter().map(|item| item.id).collect();
+
+        assert_eq!(model.remove_ids_after_drop(&ids).unwrap(), 1);
+        assert_eq!(model.items().len(), 1);
+        assert!(model.items()[0].pinned);
+    }
+
+    #[test]
+    fn repeated_paths_are_kept_when_deduplication_is_disabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("repeat.txt");
+        fs::write(&file, "repeat").unwrap();
+        let mut model = ShelfModel::in_memory();
+
+        let first = model
+            .add_paths_report_with_deduplication([file.clone()], false)
+            .unwrap();
+        let second = model
+            .add_paths_report_with_deduplication([file], false)
+            .unwrap();
+
+        assert_eq!(first.added, 1);
+        assert_eq!(second.added, 1);
+        assert!(second.duplicates.is_empty());
+        assert!(second.duplicate_ids.is_empty());
+        assert_eq!(model.items().len(), 2);
+        assert_ne!(model.items()[0].id, model.items()[1].id);
+    }
+
+    #[test]
+    fn item_ids_survive_a_reload() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = directory.path().join("state.json");
+        let file = directory.path().join("kept.txt");
+        fs::write(&file, "kept").unwrap();
+        let mut model = ShelfModel::load(state.clone()).unwrap();
+        model.add_paths([file]).unwrap();
+        let id = model.items()[0].id;
+
+        let restored = ShelfModel::load(state).unwrap();
+
+        assert_eq!(restored.items().len(), 1);
+        assert_eq!(restored.items()[0].id, id);
+    }
+
+    #[test]
+    fn persisted_items_sharing_an_id_are_given_unique_ids() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = directory.path().join("state.json");
+        let first = directory.path().join("first");
+        let second = directory.path().join("second");
+        fs::write(&first, "first").unwrap();
+        fs::write(&second, "second").unwrap();
+        let shared = Uuid::new_v4();
+        let stored = serde_json::json!([
+            {"id": shared, "path": first},
+            {"id": shared, "path": second},
+        ]);
+        fs::write(&state, serde_json::to_vec(&stored).unwrap()).unwrap();
+
+        let model = ShelfModel::load(state).unwrap();
+
+        assert_eq!(model.items().len(), 2);
+        assert_ne!(model.items()[0].id, model.items()[1].id);
     }
 
     #[test]
