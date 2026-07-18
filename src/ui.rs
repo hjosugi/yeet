@@ -37,6 +37,9 @@ pub struct Ui {
     preferences_button: gtk::Button,
     revealer: gtk::Revealer,
     edges: RefCell<Vec<gtk::Window>>,
+    shelf_shown: Cell<bool>,
+    edge_rebuild_scheduled: Cell<bool>,
+    watched_monitors: RefCell<Vec<glib::WeakRef<gdk::Monitor>>>,
     selected: RefCell<HashSet<Uuid>>,
     global_hotkey: RefCell<Option<platform::GlobalHotkey>>,
     desktop_services: RefCell<Option<DesktopServices>>,
@@ -162,7 +165,7 @@ impl Ui {
         outer.append(&footer);
         let revealer = gtk::Revealer::builder()
             .child(&outer)
-            .reveal_child(true)
+            .reveal_child(false)
             .transition_type(if settings.edge == ScreenEdge::Right {
                 gtk::RevealerTransitionType::SlideLeft
             } else {
@@ -200,6 +203,9 @@ impl Ui {
             preferences_button: preferences.clone(),
             revealer,
             edges: RefCell::new(Vec::new()),
+            shelf_shown: Cell::new(false),
+            edge_rebuild_scheduled: Cell::new(false),
+            watched_monitors: RefCell::new(Vec::new()),
             selected: RefCell::new(HashSet::new()),
             global_hotkey: RefCell::new(None),
             desktop_services: RefCell::new(None),
@@ -251,6 +257,23 @@ impl Ui {
         install_keyboard(&ui);
 
         attach_drop_target(&ui.shelf, &ui, false, None);
+        if platform::uses_premapped_shelf() {
+            ui.shelf.set_size_request(300, -1);
+            ui.shelf.add_css_class("shelf-dormant");
+            ui.revealer.set_opacity(0.0);
+            {
+                let weak = Rc::downgrade(&ui);
+                ui.shelf.connect_map(move |shelf| {
+                    if let Some(ui) = weak.upgrade() {
+                        platform::set_shelf_input_enabled(shelf, ui.shelf_shown.get());
+                    }
+                });
+            }
+            // Keep the layer surface mapped before a drag reaches an edge.
+            // Its empty input region lets normal pointer and DnD events pass
+            // through to applications below until `show()` enables it.
+            ui.shelf.set_visible(true);
+        }
         ui.refresh();
         ui.rebuild_edges(app);
         if let Some(display) = gdk::Display::default() {
@@ -258,7 +281,7 @@ impl Ui {
             let ui_for_change = ui.clone();
             let app = app.clone();
             monitors.connect_items_changed(move |_, _, _, _| {
-                ui_for_change.rebuild_edges(&app);
+                ui_for_change.schedule_edge_rebuild(&app);
             });
         }
         {
@@ -329,7 +352,7 @@ impl Ui {
         };
         self.refresh();
         if toggle {
-            if self.shelf.is_visible() {
+            if self.shelf_shown.get() {
                 self.hide();
             } else {
                 self.show(None);
@@ -360,6 +383,7 @@ impl Ui {
             else {
                 continue;
             };
+            self.watch_monitor(&monitor, app);
             if monitor.connector().is_some_and(|connector| {
                 self.settings
                     .borrow()
@@ -383,6 +407,51 @@ impl Ui {
             edge.set_visible(true);
             edges.push(edge);
         }
+    }
+
+    fn watch_monitor(self: &Rc<Self>, monitor: &gdk::Monitor, app: &gtk::Application) {
+        let mut watched = self.watched_monitors.borrow_mut();
+        watched.retain(|weak| weak.upgrade().is_some());
+        if watched
+            .iter()
+            .any(|weak| weak.upgrade().is_some_and(|known| known == *monitor))
+        {
+            return;
+        }
+
+        {
+            let weak = Rc::downgrade(self);
+            let app = app.clone();
+            monitor.connect_scale_factor_notify(move |_| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.schedule_edge_rebuild(&app);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(self);
+            let app = app.clone();
+            monitor.connect_geometry_notify(move |_| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.schedule_edge_rebuild(&app);
+                }
+            });
+        }
+        watched.push(monitor.downgrade());
+    }
+
+    fn schedule_edge_rebuild(self: &Rc<Self>, app: &gtk::Application) {
+        if self.edge_rebuild_scheduled.replace(true) {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        let app = app.clone();
+        glib::idle_add_local_once(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.edge_rebuild_scheduled.set(false);
+                ui.rebuild_edges(&app);
+            }
+        });
     }
 
     fn refresh(self: &Rc<Self>) {
@@ -529,7 +598,7 @@ impl Ui {
             add_drag_source(&content, self, Some(item.id));
         }
         update_selection_accessibility(&self.list);
-        if self.shelf.is_visible() {
+        if self.shelf_shown.get() {
             let focus_index = focused_id
                 .as_ref()
                 .and_then(|id| {
@@ -553,6 +622,12 @@ impl Ui {
         if let Some(monitor) = monitor {
             platform::set_shelf_monitor(&self.shelf, monitor, self.settings.borrow().edge);
         }
+        self.shelf_shown.set(true);
+        if platform::uses_premapped_shelf() {
+            self.shelf.remove_css_class("shelf-dormant");
+            self.revealer.set_opacity(1.0);
+            platform::set_shelf_input_enabled(&self.shelf, true);
+        }
         self.shelf.set_visible(true);
         self.revealer.set_reveal_child(true);
         if let Some(index) = self.first_selected_index() {
@@ -563,8 +638,9 @@ impl Ui {
     }
 
     fn hide(&self) {
+        self.shelf_shown.set(false);
         if self.settings.borrow().reduced_motion {
-            self.shelf.set_visible(false);
+            finish_shelf_hide(&self.shelf);
             return;
         }
         self.revealer.set_reveal_child(false);
@@ -572,13 +648,13 @@ impl Ui {
         let revealer = self.revealer.clone();
         glib::timeout_add_local_once(Duration::from_millis(190), move || {
             if !revealer.reveals_child() {
-                shelf.set_visible(false);
+                finish_shelf_hide(&shelf);
             }
         });
     }
 
     fn toggle(&self) {
-        if self.shelf.is_visible() {
+        if self.shelf_shown.get() {
             self.hide();
         } else {
             self.show(None);
@@ -1275,6 +1351,18 @@ impl Ui {
         for edge in self.edges.borrow().iter() {
             platform::refresh_window_theme(edge);
         }
+    }
+}
+
+fn finish_shelf_hide(shelf: &gtk::ApplicationWindow) {
+    if platform::uses_premapped_shelf() {
+        platform::set_shelf_input_enabled(shelf, false);
+        shelf.add_css_class("shelf-dormant");
+        if let Some(child) = shelf.child() {
+            child.set_opacity(0.0);
+        }
+    } else {
+        shelf.set_visible(false);
     }
 }
 
@@ -2123,6 +2211,7 @@ fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_data(
         ".yeet-shelf { background: alpha(@window_bg_color, 0.96); border: 1px solid alpha(@accent_color, 0.55); border-radius: 12px; }\n\
+         .yeet-shelf.shelf-dormant { background: transparent; border-color: transparent; }\n\
          .yeet-edge { background: alpha(@accent_color, 0.04); }\n\
          .yeet-edge:drop(active) { background: alpha(@accent_color, 0.65); }\n\
          .yeet-shelf.drop-active { border: 3px solid @accent_color; background: alpha(@accent_bg_color, 0.16); }\n\

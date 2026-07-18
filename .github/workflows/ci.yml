@@ -55,7 +55,7 @@ jobs:
         run: >-
           sudo apt-get update && sudo apt-get install -y
           libgtk-4-dev libwayland-dev wayland-protocols
-          meson ninja-build xvfb weston
+          meson ninja-build sway xvfb weston
       - name: Build gtk4-layer-shell
         shell: bash
         run: |
@@ -97,6 +97,8 @@ jobs:
           XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY=yeet-ci GDK_BACKEND=wayland timeout 5s ./target/release/yeet --hidden
           status=$?
           test "$status" -eq 124
+      - name: Layer-shell surface smoke test
+        run: bash scripts/test-layer-shell-smoke.sh ./target/release/yeet
       - uses: actions/upload-artifact@v4
         with:
           name: yeet-linux

@@ -128,6 +128,31 @@ pub fn layer_shell_supported() -> bool {
     false
 }
 
+pub fn uses_premapped_shelf() -> bool {
+    layer_shell_supported()
+}
+
+#[cfg(target_os = "linux")]
+pub fn set_shelf_input_enabled(window: &gtk::ApplicationWindow, enabled: bool) {
+    use gtk::prelude::{NativeExt, SurfaceExt};
+
+    if !layer_shell_supported() {
+        return;
+    }
+    let Some(surface) = window.surface() else {
+        return;
+    };
+    if enabled {
+        surface.set_input_region(None);
+    } else {
+        let empty = gtk::cairo::Region::create();
+        surface.set_input_region(Some(&empty));
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn set_shelf_input_enabled(_window: &gtk::ApplicationWindow, _enabled: bool) {}
+
 #[cfg(target_os = "linux")]
 pub fn configure_shelf(window: &gtk::ApplicationWindow, edge: ScreenEdge) {
     use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
@@ -186,7 +211,7 @@ pub fn configure_edge(
     strip_size: i32,
     edge: ScreenEdge,
 ) {
-    use gtk::prelude::GtkWindowExt;
+    use gtk::prelude::{GtkWindowExt, MonitorExt};
     use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
     if !layer_shell_supported() {
@@ -195,7 +220,7 @@ pub fn configure_edge(
     window.init_layer_shell();
     window.set_layer(Layer::Overlay);
     window.set_namespace(Some("yeet-edge-strip"));
-    window.set_default_size(strip_size.clamp(3, 16), 1);
+    window.set_default_size(logical_strip_size(strip_size, monitor.scale_factor()), 1);
     window.set_monitor(Some(monitor));
     window.set_anchor(Edge::Right, edge == ScreenEdge::Right);
     window.set_anchor(Edge::Left, edge == ScreenEdge::Left);
@@ -203,6 +228,36 @@ pub fn configure_edge(
     window.set_anchor(Edge::Bottom, true);
     window.set_exclusive_zone(0);
     window.set_keyboard_mode(KeyboardMode::None);
+}
+
+#[cfg(target_os = "linux")]
+fn logical_strip_size(physical_size: i32, scale_factor: i32) -> i32 {
+    let physical_size = physical_size.clamp(3, 16);
+    let scale_factor = scale_factor.max(1);
+    ((physical_size + scale_factor - 1) / scale_factor).max(2)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::logical_strip_size;
+
+    #[test]
+    fn default_strip_stays_near_six_physical_pixels_at_integer_scales() {
+        for scale in 1..=4 {
+            let logical = logical_strip_size(6, scale);
+            let physical = logical * scale;
+            assert!((4..=8).contains(&physical), "scale {scale}: {physical}px");
+        }
+    }
+
+    #[test]
+    fn strip_size_is_clamped_before_scale_conversion() {
+        assert_eq!(logical_strip_size(-10, 1), 3);
+        assert_eq!(logical_strip_size(100, 1), 16);
+        assert_eq!(logical_strip_size(3, 2), 2);
+        assert_eq!(logical_strip_size(16, 2), 8);
+        assert_eq!(logical_strip_size(6, 0), 6);
+    }
 }
 
 #[cfg(target_os = "linux")]

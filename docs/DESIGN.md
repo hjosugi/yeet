@@ -221,7 +221,7 @@ collisions with unrelated tools.
 
 | ID | Risk | Mitigation |
 |---|---|---|
-| S1 | Mid-drag reveal: does the drag cleanly continue from strip surface onto a newly mapped shelf surface on every compositor? | Two-surface design; prototype week 1; per-compositor fallback = pre-mapped transparent shelf |
+| S1 | Mid-drag reveal: does the drag cleanly continue from strip surface onto the shelf on every compositor? | Two-surface design with a pre-mapped transparent shelf and an empty input region while hidden; verify per compositor |
 | S2 | Windows UIPI blocks DnD with elevated apps | Document; optional elevated helper is out of scope |
 | S3 | GDK drag completion/cancellation differences across compositors | Check the selected action at drag end; cover with the compositor matrix |
 | S4 | GNOME has no layer-shell for third parties | Fallback mode is a first-class citizen, not an afterthought |
