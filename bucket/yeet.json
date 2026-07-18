@@ -1,6 +1,6 @@
 {
     "$schema": "https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/schema.json",
-    "version": "0.5.0",
+    "version": "0.5.1",
     "description": "A native drag-and-drop shelf for Wayland and Windows (portable Windows build).",
     "homepage": "https://github.com/hjosugi/yeet",
     "license": "MIT",
@@ -12,9 +12,9 @@
     ],
     "architecture": {
         "64bit": {
-            "url": "https://github.com/hjosugi/yeet/releases/download/v0.5.0/yeet-0.5.0-windows-x64.zip",
-            "hash": "b75b446ff4391a306726033197e51a2a09f4a7ff5ff6a834d04b5a8df1ef7b1b",
-            "extract_dir": "yeet-0.5.0-windows-x64"
+            "url": "https://github.com/hjosugi/yeet/releases/download/v0.5.1/yeet-0.5.1-windows-x64.zip",
+            "hash": "ed6a6dcf5de63abc93d86d58f3291a221755823facfd6f2d0d3f457b79566b6a",
+            "extract_dir": "yeet-0.5.1-windows-x64"
         }
     },
     "bin": "yeet.exe",

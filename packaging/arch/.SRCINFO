@@ -1,6 +1,6 @@
 pkgbase = yeet-shelf
 	pkgdesc = Native Yoink-style drag-and-drop shelf for Wayland and Windows
-	pkgver = 0.5.0
+	pkgver = 0.5.1
 	pkgrel = 1
 	url = https://github.com/hjosugi/yeet
 	arch = x86_64
@@ -10,7 +10,7 @@ pkgbase = yeet-shelf
 	depends = gtk4-layer-shell
 	provides = yeet
 	conflicts = yeet
-	source = yeet-0.5.0.tar.gz::https://github.com/hjosugi/yeet/archive/refs/tags/v0.5.0.tar.gz
-	sha256sums = b02196203374c5ab578f9540f68453eba11f4d3d512bdbe6f1f60b2acd653893
+	source = yeet-0.5.1.tar.gz::https://github.com/hjosugi/yeet/archive/refs/tags/v0.5.1.tar.gz
+	sha256sums = 13f89b7b182c04dc970380abb2dc38ff560884fb695a14cf238a8cc485ffa2e3
 
 pkgname = yeet-shelf

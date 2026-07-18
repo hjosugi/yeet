@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+mode="${1:-}"
+if [[ -n "$mode" && "$mode" != "--tagged" ]]; then
+  printf 'Usage: %s [--tagged]\n' "$0" >&2
+  exit 2
+fi
+
 fail() {
   printf 'release metadata: %s\n' "$*" >&2
   exit 1
@@ -56,3 +62,66 @@ if rg -n 'hjosugi/wayland-yeet|name = "wayland-yeet"' \
 fi
 
 printf 'Release-independent metadata consistently targets Yeet %s.\n' "$version"
+
+if [[ "$mode" == "--tagged" ]]; then
+  tag="v$version"
+  commit="$(git rev-parse "$tag^{}")" ||
+    fail "tag $tag does not exist"
+  git_pkgver="$(
+    git describe --long --tags --abbrev=7 "$tag^{}" |
+      sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+  )"
+
+  assert_contains packaging/arch/PKGBUILD "pkgver=$version"
+  assert_contains packaging/arch/PKGBUILD-git "pkgver=$git_pkgver"
+  grep -Fq "tag: $tag" packaging/flatpak/io.github.hjosugi.Yeet.yml ||
+    fail "Flatpak manifest does not target $tag"
+  grep -Fq "commit: $commit" packaging/flatpak/io.github.hjosugi.Yeet.yml ||
+    fail "Flatpak manifest does not pin $commit"
+
+  archive="$(mktemp)"
+  trap 'rm -f "$archive"' EXIT
+  curl -fsSL \
+    "https://github.com/hjosugi/yeet/archive/refs/tags/$tag.tar.gz" \
+    -o "$archive"
+  archive_hash="$(sha256sum "$archive" | cut -d' ' -f1)"
+  grep -Fq "sha256sums=('$archive_hash')" packaging/arch/PKGBUILD ||
+    fail "Arch archive hash does not match the published $tag source archive"
+
+  windows_sums="$(
+    curl -fsSL \
+      "https://github.com/hjosugi/yeet/releases/download/$tag/SHA256SUMS-windows.txt"
+  )"
+  portable_hash="$(
+    sed -n "s/ .*yeet-$version-windows-x64\\.zip\$//p" <<<"$windows_sums"
+  )"
+  [[ -n "$portable_hash" ]] ||
+    fail "portable ZIP is missing from the published Windows checksums"
+  python - "$version" "$portable_hash" <<'PY'
+import json
+import sys
+
+version, expected_hash = sys.argv[1:]
+with open("bucket/yeet.json", encoding="utf-8") as manifest_file:
+    manifest = json.load(manifest_file)
+portable = manifest["architecture"]["64bit"]
+expected_url = (
+    f"https://github.com/hjosugi/yeet/releases/download/v{version}/"
+    f"yeet-{version}-windows-x64.zip"
+)
+expected_extract_dir = f"yeet-{version}-windows-x64"
+if manifest["version"] != version:
+    raise SystemExit("Scoop manifest version does not match the release")
+if portable["url"] != expected_url:
+    raise SystemExit("Scoop manifest URL does not match the release")
+if portable["extract_dir"] != expected_extract_dir:
+    raise SystemExit("Scoop extract_dir does not match the release")
+if portable["hash"] != expected_hash:
+    raise SystemExit("Scoop hash does not match the published portable ZIP")
+PY
+
+  if rg -n '^- \[ \]' docs/release-checklist.md; then
+    fail "release checklist still has incomplete items"
+  fi
+  printf 'Tagged metadata matches published %s artifacts.\n' "$tag"
+fi

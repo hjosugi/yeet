@@ -44,6 +44,6 @@ modules:
     sources:
       - type: git
         url: https://github.com/hjosugi/yeet.git
-        tag: v0.5.0
-        commit: 62eb7a5f28f35c59cf7a57852e0cdd10bc549063
+        tag: v0.5.1
+        commit: 7e7d97ac8cdb5da2616af3e1dbf13a86344ad118
       - cargo-sources.json
