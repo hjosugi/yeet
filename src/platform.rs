@@ -410,7 +410,7 @@ mod windows_impl {
     use gtk::gdk;
     use gtk::prelude::*;
     use std::sync::atomic::Ordering;
-    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::Graphics::Dwm::{
         DWM_WINDOW_CORNER_PREFERENCE, DWMWA_USE_IMMERSIVE_DARK_MODE,
         DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
@@ -418,14 +418,16 @@ mod windows_impl {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         HOT_KEY_MODIFIERS, MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey,
     };
+    use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GWL_EXSTYLE, GetWindowLongPtrW, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-        SetWindowLongPtrW, SetWindowPos, WM_HOTKEY, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-        WS_EX_TOPMOST,
+        GWL_EXSTYLE, GetWindowLongPtrW, HWND_TOPMOST, STYLESTRUCT, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SetWindowLongPtrW, SetWindowPos, WM_HOTKEY, WM_NCDESTROY, WM_STYLECHANGING,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
     };
     use yeet::settings::{HotkeyBinding, ScreenEdge};
 
     const HOTKEY_ID: i32 = 0x5945;
+    const NATIVE_STYLE_SUBCLASS_ID: usize = 0x5945_4554;
 
     pub struct GlobalHotkey {
         _filter: Option<gdk_win32::Win32DisplayFilterHandle>,
@@ -666,6 +668,7 @@ mod windows_impl {
             geometry.y() + (geometry.height() - height) / 2
         };
         unsafe {
+            install_native_style_guard(hwnd, edge);
             let mut style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
             style |= (WS_EX_TOOLWINDOW | WS_EX_TOPMOST).0 as isize;
             if edge {
@@ -696,6 +699,45 @@ mod windows_impl {
             // final native write as well as setting them before FRAMECHANGED.
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
         }
+    }
+
+    unsafe fn install_native_style_guard(hwnd: HWND, edge: bool) {
+        let mut preserved = (WS_EX_TOOLWINDOW | WS_EX_TOPMOST).0;
+        if edge {
+            preserved |= WS_EX_NOACTIVATE.0;
+        }
+        if !unsafe {
+            SetWindowSubclass(
+                hwnd,
+                Some(preserve_native_styles),
+                NATIVE_STYLE_SUBCLASS_ID,
+                preserved as usize,
+            )
+            .as_bool()
+        } {
+            eprintln!("yeet: failed to guard native Windows styles");
+        }
+    }
+
+    unsafe extern "system" fn preserve_native_styles(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        subclass_id: usize,
+        preserved: usize,
+    ) -> LRESULT {
+        if message == WM_STYLECHANGING && wparam.0 as isize == GWL_EXSTYLE.0 as isize {
+            let change = lparam.0 as *mut STYLESTRUCT;
+            if let Some(change) = unsafe { change.as_mut() } {
+                change.styleNew |= preserved as u32;
+            }
+        } else if message == WM_NCDESTROY {
+            unsafe {
+                let _ = RemoveWindowSubclass(hwnd, Some(preserve_native_styles), subclass_id);
+            }
+        }
+        unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
     }
 
     pub fn refresh_window_theme(window: &gtk::Window) {

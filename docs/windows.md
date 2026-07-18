@@ -10,7 +10,10 @@ require a real Windows release machine.
 Both the shelf and edge strips set `WS_EX_TOPMOST` and are placed with
 `SetWindowPos(HWND_TOPMOST)`. The shelf reapplies those flags whenever it is
 mapped, so hiding and showing it from the CLI cannot demote it below ordinary
-windows.
+windows. GTK 4 rebuilds extended styles on ordinary Win32 toplevels and removes
+`WS_EX_TOOLWINDOW`; Yeet subclasses each native window and preserves its
+tool-window/topmost bits across `WM_STYLECHANGING`, with `WS_EX_NOACTIVATE`
+preserved on edge strips.
 
 Windows CI launches the assembled portable bundle with an isolated profile and
 clean `PATH`, adds a real file so the shelf maps, and enumerates its native
