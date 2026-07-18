@@ -1,6 +1,6 @@
 [package]
-name = "wayland-yeet"
-version = "0.5.0"
+name = "yeet"
+version = "0.5.1"
 edition = "2024"
 rust-version = "1.92"
 description = "A native drag-and-drop shelf for Wayland and Windows"

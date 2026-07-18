@@ -1,7 +1,7 @@
 use gtk::gdk;
 #[cfg(not(target_os = "windows"))]
-use wayland_yeet::settings::HotkeyBinding;
-use wayland_yeet::settings::{HotkeyParseError, ScreenEdge, Theme};
+use yeet::settings::HotkeyBinding;
+use yeet::settings::{HotkeyParseError, ScreenEdge, Theme};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GlobalHotkeyError {
@@ -410,7 +410,6 @@ mod windows_impl {
     use gtk::gdk;
     use gtk::prelude::*;
     use std::sync::atomic::Ordering;
-    use wayland_yeet::settings::{HotkeyBinding, ScreenEdge};
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Dwm::{
         DWM_WINDOW_CORNER_PREFERENCE, DWMWA_USE_IMMERSIVE_DARK_MODE,
@@ -424,6 +423,7 @@ mod windows_impl {
         SetWindowLongPtrW, SetWindowPos, WM_HOTKEY, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
         WS_EX_TOPMOST,
     };
+    use yeet::settings::{HotkeyBinding, ScreenEdge};
 
     const HOTKEY_ID: i32 = 0x5945;
 

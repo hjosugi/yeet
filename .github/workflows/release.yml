@@ -111,6 +111,13 @@ jobs:
           finally {
             Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
           }
+      - name: Verify portable runtime and topmost windows
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $root = Join-Path $PWD "yeet-$version-windows-x64"
+          $env:PATH = "$root;$env:SystemRoot\System32;$env:SystemRoot"
+          ./scripts/Test-WindowsRuntime.ps1 -Executable (Join-Path $root "yeet.exe")
       - name: Archive portable build
         shell: msys2 {0}
         run: |

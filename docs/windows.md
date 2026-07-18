@@ -12,6 +12,15 @@ Both the shelf and edge strips set `WS_EX_TOPMOST` and are placed with
 mapped, so hiding and showing it from the CLI cannot demote it below ordinary
 windows.
 
+Windows CI launches the assembled portable bundle with an isolated profile and
+clean `PATH`, adds a real file so the shelf maps, and enumerates its native
+windows. The test requires one visible shelf and one visible edge strip per
+reported monitor; it checks their dimensions and requires `WS_EX_TOPMOST` plus
+`WS_EX_TOOLWINDOW`, with `WS_EX_NOACTIVATE` on every edge. This catches missing
+runtime files and regressions in the native topmost setup before release. It
+does not simulate Win+D, fullscreen transitions, display hotplug or an OLE drag,
+so the corresponding real-machine checks below still apply.
+
 The notification-area icon is implemented directly with `Shell_NotifyIconW`.
 Its tooltip includes the current shelf item count, left-click toggles the shelf,
 and its menu exposes Show/Hide, Capture Clipboard, Clear, Settings, and Quit. It

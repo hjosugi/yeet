@@ -11,10 +11,11 @@ leaves the shelf, it disappears.
 
 ![Yeet shelf holding two files](docs/screenshots/yeet-linux-dark.png)
 
-> Development status: **main is targeting v0.4**. It includes native Linux and
-> Windows tray menus, defensive file/URI drop handling, accepted-versus-cancelled
-> drag-out accounting, and MIME-preserving text/image snippets. Real compositor
-> and Windows verification remains tracked separately in the
+> Development status: **main is targeting v0.5.1**. The application and Cargo
+> package are now named simply Yeet and use one native Rust/GTK 4 codebase. The
+> v0.5 line adds stable item identities plus configurable deduplication and
+> multi-drop selection on top of the complete v0.4 feature set. Real compositor
+> and interactive Windows verification remains tracked separately in the
 > [test matrix](docs/compositors.md); an implemented path is not presented as a
 > verified platform result.
 
@@ -163,7 +164,7 @@ SmartScreen and runtime details.
 Download the current release archive and install it under `/usr/local`:
 
 ```sh
-version=0.5.0
+version=0.5.1
 base="https://github.com/hjosugi/yeet/releases/download/v${version}"
 curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
 curl -fLO "$base/SHA256SUMS-linux.txt"

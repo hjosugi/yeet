@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
-use wayland_yeet::i18n::{Language, set_language, tr};
-use wayland_yeet::model::{AddReport, ShelfItem, ShelfModel};
-use wayland_yeet::settings::{HotkeyBinding, ScreenEdge, Settings, Theme};
+use yeet::i18n::{Language, set_language, tr};
+use yeet::model::{AddReport, ShelfItem, ShelfModel};
+use yeet::settings::{HotkeyBinding, ScreenEdge, Settings, Theme};
 
 thread_local! {
     static THUMBNAIL_CACHE: RefCell<HashMap<PathBuf, gdk::Texture>> = RefCell::new(HashMap::new());

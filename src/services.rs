@@ -41,7 +41,7 @@ mod backend {
         atomic::{AtomicUsize, Ordering},
         mpsc::Sender,
     };
-    use wayland_yeet::i18n::tr;
+    use yeet::i18n::tr;
 
     pub struct Backend {
         count: Arc<AtomicUsize>,
@@ -175,7 +175,6 @@ mod backend {
         mpsc::Sender,
     };
     use std::thread::JoinHandle;
-    use wayland_yeet::i18n::tr;
     use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Shell::{
@@ -192,6 +191,7 @@ mod backend {
         WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP, WM_NCCREATE, WM_NULL, WNDCLASSW,
     };
     use windows::core::{PCWSTR, w};
+    use yeet::i18n::tr;
 
     const APP_ICON_RESOURCE_ID: usize = 1;
     const TRAY_ICON_ID: u32 = 1;

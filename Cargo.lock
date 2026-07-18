@@ -1273,8 +1273,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "wayland-yeet"
-version = "0.5.0"
+name = "yeet"
+version = "0.5.1"
 dependencies = [
  "ashpd",
  "directories",

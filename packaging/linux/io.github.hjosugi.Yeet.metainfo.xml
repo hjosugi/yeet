@@ -32,6 +32,13 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.1" date="2026-07-18">
+      <description>
+        <p>Aligns the application and package branding on Yeet, refreshes
+        Linux release metadata, and strengthens Windows portable-build checks
+        by verifying the native topmost shelf and edge windows.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-07-16">
       <description>
         <p>Gives every shelf item a stable identity of its own, so repeated
