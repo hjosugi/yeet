@@ -100,6 +100,10 @@ function Assert-Style([object]$Window, [long]$Style, [string]$Name) {
     }
 }
 
+function Test-Style([object]$Window, [long]$Style) {
+    return ($Window.ExStyle -band $Style) -eq $Style
+}
+
 function Invoke-Toggle([string]$Path) {
     $toggle = Start-Process -FilePath $Path -ArgumentList "--toggle" -Wait -PassThru
     if ($toggle.ExitCode -ne 0) {
@@ -144,6 +148,10 @@ try {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     $shelf = $null
     $edges = @()
+    $monitorCount = [YeetNativeWindow]::GetSystemMetrics($SmMonitors)
+    if ($monitorCount -lt 1) {
+        throw "Windows reported no display monitors."
+    }
 
     do {
         Start-Sleep -Milliseconds 250
@@ -154,7 +162,21 @@ try {
         $windows = Get-ProcessWindows -ProcessId $process.Id
         $shelf = @($windows | Where-Object Title -eq "Yeet" | Select-Object -First 1)
         $edges = @($windows | Where-Object Title -eq "Yeet edge")
-    } while (($shelf.Count -ne 1 -or $edges.Count -lt 1) -and [DateTime]::UtcNow -lt $deadline)
+        $shelfReady = $shelf.Count -eq 1 -and
+            $shelf[0].Visible -and
+            (Test-Style $shelf[0] $WsExTopmost) -and
+            (Test-Style $shelf[0] $WsExToolWindow)
+        $edgesReady = $edges.Count -eq $monitorCount
+        if ($edgesReady) {
+            foreach ($edge in $edges) {
+                $edgesReady = $edgesReady -and
+                    $edge.Visible -and
+                    (Test-Style $edge $WsExTopmost) -and
+                    (Test-Style $edge $WsExToolWindow) -and
+                    (Test-Style $edge $WsExNoActivate)
+            }
+        }
+    } while ((-not $shelfReady -or -not $edgesReady) -and [DateTime]::UtcNow -lt $deadline)
 
     if ($shelf.Count -ne 1) {
         throw "Expected one visible Yeet shelf HWND; found $($shelf.Count)."
@@ -169,10 +191,6 @@ try {
     Assert-Style $shelf $WsExTopmost "WS_EX_TOPMOST"
     Assert-Style $shelf $WsExToolWindow "WS_EX_TOOLWINDOW"
 
-    $monitorCount = [YeetNativeWindow]::GetSystemMetrics($SmMonitors)
-    if ($monitorCount -lt 1) {
-        throw "Windows reported no display monitors."
-    }
     if ($edges.Count -ne $monitorCount) {
         throw "Expected one edge HWND per monitor ($monitorCount); found $($edges.Count)."
     }
