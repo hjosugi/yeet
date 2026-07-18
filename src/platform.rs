@@ -552,12 +552,12 @@ mod windows_impl {
         });
         // Reassert the native styles every time the hidden shelf is mapped
         // again. GTK can finish adjusting Win32 styles after emitting `map`,
-        // so apply once synchronously for placement and again on the next main
-        // loop tick after GDK's native map work has completed.
+        // so apply once synchronously for placement and again after GDK's
+        // native map/configure work has completed.
         window.connect_map(move |window| {
             apply_to_current_monitor(window, false, current_shelf_edge());
             let window = window.clone();
-            glib::idle_add_local_once(move || {
+            glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
                 apply_to_current_monitor(&window, false, current_shelf_edge())
             });
         });
@@ -599,7 +599,7 @@ mod windows_impl {
             apply(window, &map_monitor, edge, strip_size, screen_edge);
             let window = window.clone();
             let monitor = map_monitor.clone();
-            glib::idle_add_local_once(move || {
+            glib::timeout_add_local_once(std::time::Duration::from_millis(100), move || {
                 apply(&window, &monitor, edge, strip_size, screen_edge)
             });
         });
@@ -691,6 +691,10 @@ mod windows_impl {
                 height,
                 SWP_NOACTIVATE | SWP_FRAMECHANGED,
             );
+            // `SetWindowPos` generates configure traffic that lets GDK rebuild
+            // the extended style. Make the tool-window/no-activate bits the
+            // final native write as well as setting them before FRAMECHANGED.
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
         }
     }
 
