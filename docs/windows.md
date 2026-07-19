@@ -24,6 +24,15 @@ runtime files and regressions in the native topmost setup before release. It
 does not simulate Win+D, fullscreen transitions, display hotplug or an OLE drag,
 so the corresponding real-machine checks below still apply.
 
+The platform-neutral drag completion policy is covered by the library test
+suite on Windows and Linux. A cancelled drag or a drag with no accepted copy or
+move effect retains every item. An accepted effect dismisses unpinned shelf
+entries; pinned entries stay on the shelf. A drag containing any pinned entry
+offers copy only, preventing a target from moving a pinned file out from under
+its saved shelf entry. Unpinned drags offer both copy and move, and GTK's
+explicit move/delete result is treated as an accepted move even when a backend
+does not retain the selected-action flag at drag end.
+
 The notification-area icon is implemented directly with `Shell_NotifyIconW`.
 Its tooltip includes the current shelf item count, left-click toggles the shelf,
 and its menu exposes Show/Hide, Capture Clipboard, Clear, Settings, and Quit. It

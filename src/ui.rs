@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
+use yeet::drag::{DragCompletion, DragOffer, DropEffect};
 use yeet::i18n::{Language, set_language, tr};
 use yeet::model::{AddReport, ShelfItem, ShelfModel};
 use yeet::settings::{HotkeyBinding, ScreenEdge, Settings, Theme};
@@ -1421,45 +1422,70 @@ fn apply_theme(theme: Theme) {
     settings.set_gtk_application_prefer_dark_theme(theme == Theme::Dark);
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ActiveDragItem {
+    id: Uuid,
+    path: PathBuf,
+    pinned: bool,
+}
+
 fn add_drag_source(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, source_id: Option<Uuid>) {
     let source = gtk::DragSource::builder()
-        .actions(gdk::DragAction::COPY | gdk::DragAction::MOVE)
+        .actions(gdk::DragAction::COPY)
         .build();
     let cancelled = Rc::new(Cell::new(false));
-    let active_items = Rc::new(RefCell::new(Vec::<(Uuid, PathBuf)>::new()));
+    let active_items = Rc::new(RefCell::new(Vec::<ActiveDragItem>::new()));
 
     {
         let ui = ui.clone();
         let cancelled = cancelled.clone();
         let active_items = active_items.clone();
-        source.connect_prepare(move |_, _, _| {
+        source.connect_prepare(move |source, _, _| {
             cancelled.set(false);
             let selected = ui.selected.borrow();
             let model = ui.model.borrow();
-            let items: Vec<(Uuid, PathBuf)> = match source_id {
+            let items: Vec<ActiveDragItem> = match source_id {
                 Some(source_id) if selected.contains(&source_id) => model
                     .items()
                     .iter()
                     .filter(|item| selected.contains(&item.id))
-                    .map(|item| (item.id, item.path.clone()))
+                    .map(|item| ActiveDragItem {
+                        id: item.id,
+                        path: item.path.clone(),
+                        pinned: item.pinned,
+                    })
                     .collect(),
                 Some(source_id) => model
                     .items()
                     .iter()
                     .find(|item| item.id == source_id)
-                    .map(|item| (item.id, item.path.clone()))
+                    .map(|item| ActiveDragItem {
+                        id: item.id,
+                        path: item.path.clone(),
+                        pinned: item.pinned,
+                    })
                     .into_iter()
                     .collect(),
                 None => model
                     .items()
                     .iter()
-                    .map(|item| (item.id, item.path.clone()))
+                    .map(|item| ActiveDragItem {
+                        id: item.id,
+                        path: item.path.clone(),
+                        pinned: item.pinned,
+                    })
                     .collect(),
             };
+            source.set_actions(
+                match DragOffer::for_items(items.iter().map(|item| item.pinned)) {
+                    DragOffer::CopyOnly => gdk::DragAction::COPY,
+                    DragOffer::CopyAndMove => gdk::DragAction::COPY | gdk::DragAction::MOVE,
+                },
+            );
             *active_items.borrow_mut() = items.clone();
             let files: Vec<gio::File> = items
                 .iter()
-                .map(|(_, path)| gio::File::for_path(path))
+                .map(|item| gio::File::for_path(&item.path))
                 .collect();
             if files.is_empty() {
                 return None;
@@ -1467,8 +1493,8 @@ fn add_drag_source(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, source_id: Optio
             ui.drag_active.set(true);
             let file_list = gdk::FileList::from_array(&files);
             let mut providers = vec![gdk::ContentProvider::for_value(&file_list.to_value())];
-            if let [(id, _)] = items.as_slice() {
-                let item = model.items().iter().find(|item| item.id == *id);
+            if let [active] = items.as_slice() {
+                let item = model.items().iter().find(|item| item.id == active.id);
                 if let Some(item) = item
                     && let Ok(Some(payload)) = snippet_drag_payload(item)
                 {
@@ -1511,11 +1537,24 @@ fn add_drag_source(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, source_id: Optio
     }
     {
         let ui = ui.clone();
-        source.connect_drag_end(move |_, drag, _delete_data| {
+        source.connect_drag_end(move |_, drag, delete_data| {
             ui.drag_active.set(false);
-            let accepted = !cancelled.get() && !drag.selected_action().is_empty();
-            let ids: Vec<Uuid> = active_items.borrow().iter().map(|(id, _)| *id).collect();
-            if accepted {
+            let selected_action = drag.selected_action();
+            let selected_effect = if selected_action.contains(gdk::DragAction::MOVE) {
+                DropEffect::Move
+            } else if selected_action.contains(gdk::DragAction::COPY) {
+                DropEffect::Copy
+            } else {
+                DropEffect::None
+            };
+            let completion = DragCompletion::from_backend(
+                cancelled.replace(false),
+                selected_effect,
+                delete_data,
+            );
+            let items = std::mem::take(&mut *active_items.borrow_mut());
+            let ids: Vec<Uuid> = items.into_iter().map(|item| item.id).collect();
+            if completion.accepted() {
                 match ui.model.borrow_mut().remove_ids_after_drop(&ids) {
                     Ok(_) => {
                         let mut selected = ui.selected.borrow_mut();

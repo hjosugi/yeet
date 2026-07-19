@@ -11,11 +11,12 @@ leaves the shelf, it disappears.
 
 ![Yeet shelf holding two files](docs/screenshots/yeet-linux-dark.png)
 
-> Development status: **main is targeting v0.5.1**. The application and Cargo
+> Development status: **main is targeting v0.5.2**. The application and Cargo
 > package are now named simply Yeet and use one native Rust/GTK 4 codebase. The
 > v0.5 line adds stable item identities plus configurable deduplication and
-> multi-drop selection on top of the complete v0.4 feature set. Real compositor
-> and interactive Windows verification remains tracked separately in the
+> multi-drop selection, with explicit copy/move/cancel drag completion policy,
+> on top of the complete v0.4 feature set. Real compositor and interactive
+> Windows verification remains tracked separately in the
 > [test matrix](docs/compositors.md); an implemented path is not presented as a
 > verified platform result.
 
@@ -100,7 +101,8 @@ environments.
   browser HTTP(S) references become explicit shortcuts, and unsupported or
   unavailable URIs are reported instead of silently becoming broken items.
 - Drag one item or a Ctrl-selected group back out. Cancelled drags stay on the
-  shelf; accepted drops remove only unpinned items.
+  shelf; accepted drops remove only unpinned items. Drags containing a pinned
+  item are copy-only, so a move cannot invalidate a saved shelf entry.
 - Text and image snippets retain their MIME type and offer both native snippet
   bytes and a file-list fallback during drag-out.
 - Atomic shelf persistence and single-instance argument forwarding.
@@ -164,7 +166,7 @@ SmartScreen and runtime details.
 Download the current release archive and install it under `/usr/local`:
 
 ```sh
-version=0.5.1
+version=0.5.2
 base="https://github.com/hjosugi/yeet/releases/download/v${version}"
 curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
 curl -fLO "$base/SHA256SUMS-linux.txt"

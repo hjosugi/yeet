@@ -32,6 +32,13 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.2" date="2026-07-19">
+      <description>
+        <p>Makes copy, move, cancel, and invalid drag completion explicit,
+        keeps pinned drags copy-only, and covers the platform-neutral policy
+        in the Linux and Windows library test suites.</p>
+      </description>
+    </release>
     <release version="0.5.1" date="2026-07-18">
       <description>
         <p>Aligns the application and package branding on Yeet, refreshes
