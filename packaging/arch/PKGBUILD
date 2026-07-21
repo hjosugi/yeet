@@ -1,5 +1,5 @@
 pkgname=yeet-shelf
-pkgver=0.5.2
+pkgver=0.5.3
 pkgrel=1
 pkgdesc='Native Yoink-style drag-and-drop shelf for Wayland and Windows'
 arch=('x86_64')
@@ -10,7 +10,7 @@ makedepends=('cargo')
 provides=('yeet')
 conflicts=('yeet')
 source=("yeet-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('6ce52ab80831879752d3e7ab87413b24803389971f5b9a4c5032cdd22d88dbbd')
+sha256sums=('7d8bbe2bf06ad84286440ef6ccbba62fd688d583dd4105875342d4c6d5d40be7')
 
 prepare() {
   cd "yeet-$pkgver"

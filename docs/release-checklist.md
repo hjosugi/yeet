@@ -17,19 +17,19 @@ validation.
 These depend on the final tag and must be calculated from that release's
 artifacts, not guessed or copied from an earlier release:
 
-- [ ] `packaging/arch/PKGBUILD` source-archive SHA-256 for `v0.5.3.tar.gz`, then
+- [x] `packaging/arch/PKGBUILD` source-archive SHA-256 for `v0.5.3.tar.gz`, then
   regenerate `.SRCINFO` from it.
-- [ ] `packaging/arch/PKGBUILD-git` and `.SRCINFO-git` generated version at the
+- [x] `packaging/arch/PKGBUILD-git` and `.SRCINFO-git` generated version at the
   tag commit.
-- [ ] `packaging/flatpak/io.github.hjosugi.Yeet.yml` tag and its full, immutable
+- [x] `packaging/flatpak/io.github.hjosugi.Yeet.yml` tag and its full, immutable
   commit. The tagged `Cargo.lock` matches the release worktree, so the matching
   generated cargo sources remain unchanged.
-- [ ] The Nix expression consumes the repository `Cargo.lock` and has no
+- [x] The Nix expression consumes the repository `Cargo.lock` and has no
   release-source hash to recalculate; `flake.lock` pins nixpkgs and is not a
   Yeet release-version field.
-- [ ] The Scoop manifest in `bucket/yeet.json` is refreshed from the published
+- [x] The Scoop manifest in `bucket/yeet.json` is refreshed from the published
   portable ZIP checksum; the Scoop Excavator workflow verifies later updates.
-- [ ] `scripts/check-release-metadata.sh --tagged` matches the immutable tag,
+- [x] `scripts/check-release-metadata.sh --tagged` matches the immutable tag,
   source archive, Windows checksum file and Scoop manifest.
 
 For the historical hashes and commit IDs used by earlier releases, see the git
