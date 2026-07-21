@@ -1,3 +1,8 @@
+// Release builds use the Windows GUI subsystem so launching Yeet (Explorer,
+// installer shortcut, tray) does not open an empty console window.
+// `attach_parent_console` restores terminal output; debug builds keep a console.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod platform;
 mod services;
 mod ui;
@@ -15,6 +20,7 @@ Native drag-and-drop shelf for Wayland and Windows.\n\n\
 Options:\n  --toggle   Show or hide the shelf\n  --clear    Remove every item\n  --hidden   Start without showing the shelf\n  --help     Show this help\n  --version  Show the version\n";
 
 fn main() -> glib::ExitCode {
+    platform::attach_parent_console();
     let local_arguments: Vec<_> = std::env::args_os().collect();
     if local_arguments.iter().any(|argument| argument == "--help") {
         print!("{HELP}");
