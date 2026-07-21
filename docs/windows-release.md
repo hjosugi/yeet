@@ -33,7 +33,7 @@ $password = Read-Host "PFX password" -AsSecureString
 ./packaging/windows/Sign-WindowsArtifacts.ps1 `
   -CertificatePath ./yeet-code-signing.pfx `
   -CertificatePassword $password `
-  -Path ./yeet-0.5.2-windows-x64-setup.exe
+  -Path ./yeet-0.5.3-windows-x64-setup.exe
 ```
 
 ## Preparing a winget-pkgs submission
@@ -42,7 +42,7 @@ Generate manifests from the final, signed installer. The installer must already
 be uploaded at the release URL embedded by `New-WingetManifest.ps1`.
 
 ```powershell
-$version = "0.5.2"
+$version = "0.5.3"
 $installer = "./yeet-$version-windows-x64-setup.exe"
 ./packaging/windows/New-WingetManifest.ps1 `
   -Version $version -Installer $installer -OutputDirectory ./winget

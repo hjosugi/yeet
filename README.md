@@ -11,7 +11,7 @@ leaves the shelf, it disappears.
 
 ![Yeet shelf holding two files](docs/screenshots/yeet-linux-dark.png)
 
-> Development status: **main is targeting v0.5.2**. The application and Cargo
+> Development status: **main is targeting v0.5.3**. The application and Cargo
 > package are now named simply Yeet and use one native Rust/GTK 4 codebase. The
 > v0.5 line adds stable item identities plus configurable deduplication and
 > multi-drop selection, with explicit copy/move/cancel drag completion policy,
@@ -166,7 +166,7 @@ SmartScreen and runtime details.
 Download the current release archive and install it under `/usr/local`:
 
 ```sh
-version=0.5.2
+version=0.5.3
 base="https://github.com/hjosugi/yeet/releases/download/v${version}"
 curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
 curl -fLO "$base/SHA256SUMS-linux.txt"
