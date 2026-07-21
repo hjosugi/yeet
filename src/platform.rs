@@ -59,6 +59,31 @@ pub fn set_theme(theme: Theme) {
 #[cfg(not(target_os = "windows"))]
 pub fn set_theme(_theme: Theme) {}
 
+/// Reconnect stdout to the launching terminal on Windows.
+///
+/// The GUI subsystem (see `main.rs`) stops a background launch from flashing a
+/// console window but also detaches stdout. Attaching to the parent console
+/// restores `--help`/`--version` output, but only when stdout is unset: a
+/// redirected pipe (CI's `yeet --version | grep`) is left alone, and a launch
+/// with no parent console stays silent — no console window appears.
+#[cfg(target_os = "windows")]
+pub fn attach_parent_console() {
+    use windows::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE,
+    };
+
+    let missing_stdout = match unsafe { GetStdHandle(STD_OUTPUT_HANDLE) } {
+        Ok(handle) => handle.is_invalid(),
+        Err(_) => true,
+    };
+    if missing_stdout {
+        let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn attach_parent_console() {}
+
 #[cfg(not(target_os = "linux"))]
 use gtk::prelude::GtkWindowExt;
 
