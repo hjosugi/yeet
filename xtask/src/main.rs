@@ -20,11 +20,13 @@ Commands:
   package <TARGET>   Build a release artifact into dist/
   checksums <FAMILY> Write SHA256SUMS-<FAMILY>.txt for dist/ artifacts
   version            Print the version taken from Cargo.toml
+  arch               Print the architecture used in artifact names
 
 Targets:
   linux-tar     yeet-<version>-linux-<arch>.tar.gz
   appimage      yeet-<version>-linux-<arch>.AppImage
   windows-zip   yeet-<version>-windows-x64.zip from an existing bundle directory
+  macos-tar     yeet-<version>-macos-<arch>.tar.gz
   macos-dmg     yeet-<version>-macos-<arch>.dmg
 
 Families:
@@ -51,6 +53,13 @@ fn run() -> Result<()> {
         }
         "version" => {
             println!("{}", version()?);
+            Ok(())
+        }
+        // So a workflow naming a file agrees with the names built here: macOS
+        // `uname -m` says `arm64` where Rust says `aarch64`, and `yeetup`
+        // resolves the download by the Rust spelling.
+        "arch" => {
+            println!("{}", arch());
             Ok(())
         }
         "package" => {
@@ -132,6 +141,7 @@ fn package(target: &str) -> Result<()> {
         "linux-tar" => linux_tar(&version),
         "appimage" => appimage::build(&version),
         "windows-zip" => windows_zip(&version),
+        "macos-tar" => macos_tar(&version),
         "macos-dmg" => macos_dmg(&version),
         other => Err(format!("unknown target {other}; run `cargo xtask --help`").into()),
     }
@@ -165,6 +175,23 @@ fn windows_zip(version: &str) -> Result<()> {
     }
     let archive = dist_dir()?.join(format!("{name}.zip"));
     pack::zip(&bundle, &archive)?;
+    println!("{}", archive.display());
+    Ok(())
+}
+
+/// The macOS counterpart of the Linux tarball.
+///
+/// The disk image is for a human double-clicking it; this is what `yeetup`
+/// downloads, because it unpacks a prefix rather than mounting a volume. Both
+/// carry the same build.
+fn macos_tar(version: &str) -> Result<()> {
+    let binary = build_release_binary()?;
+    let root = workspace_root();
+    let name = format!("yeet-{version}-macos-{}", arch());
+    let staging = target_dir()?.join("xtask").join(&name);
+    stage::stage(&stage::unix_payload(&root, &binary), &staging)?;
+    let archive = dist_dir()?.join(format!("{name}.tar.gz"));
+    pack::tar_gz(&staging, &archive)?;
     println!("{}", archive.display());
     Ok(())
 }

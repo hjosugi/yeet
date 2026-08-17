@@ -47,7 +47,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           cargo build --release --locked -p yeetup
-          install -Dm755 target/release/yeetup "dist/yeetup-${version}-linux-x86_64"
+          install -Dm755 target/release/yeetup "dist/yeetup-${version}-linux-$(cargo xtask arch)"
       - name: Write checksums
         run: cargo xtask checksums linux
       - uses: actions/upload-artifact@v4
@@ -184,9 +184,13 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           test "$version" = "$(cargo xtask version)"
+          # The tarball is what `yeetup` downloads; the disk image is for a
+          # human. Publishing only the image left `yeetup install` with nothing
+          # to fetch on macOS.
+          cargo xtask package macos-tar
           cargo xtask package macos-dmg
           cargo build --release --locked -p yeetup
-          install -m755 target/release/yeetup "dist/yeetup-${version}-macos-$(uname -m)"
+          install -m755 target/release/yeetup "dist/yeetup-${version}-macos-$(cargo xtask arch)"
           cargo xtask checksums macos
       - uses: actions/upload-artifact@v4
         with:
