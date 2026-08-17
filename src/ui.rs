@@ -16,10 +16,15 @@ use uuid::Uuid;
 use yeet::drag::{DragCompletion, DragOffer, DropEffect};
 use yeet::i18n::{Language, set_language, tr};
 use yeet::model::{AddReport, ShelfItem, ShelfModel};
-use yeet::settings::{HotkeyBinding, ScreenEdge, Settings, Theme};
+use yeet::settings::{
+    HotkeyBinding, MAX_SHELF_OPACITY, MIN_SHELF_OPACITY, SHELF_WIDTH, ScreenEdge, Settings, Theme,
+};
 
 thread_local! {
     static THUMBNAIL_CACHE: RefCell<HashMap<PathBuf, gdk::Texture>> = RefCell::new(HashMap::new());
+    /// Holds only the shelf background rule, so the configured opacity can be
+    /// reapplied without rebuilding the rest of the stylesheet.
+    static SHELF_BACKGROUND: gtk::CssProvider = gtk::CssProvider::new();
 }
 
 pub struct Ui {
@@ -53,6 +58,7 @@ impl Ui {
         let settings = Settings::load();
         set_language(settings.language);
         apply_theme(settings.theme);
+        apply_shelf_opacity(settings.shelf_opacity);
         // Yeet owns always-available edge drop targets even while its shelf is
         // hidden, so the primary instance must not exit with no mapped shelf.
         let hold = app.hold();
@@ -60,7 +66,7 @@ impl Ui {
         let shelf = gtk::ApplicationWindow::builder()
             .application(app)
             .title("Yeet")
-            .default_width(300)
+            .default_width(SHELF_WIDTH)
             .default_height(520)
             .decorated(false)
             .resizable(true)
@@ -74,10 +80,10 @@ impl Ui {
         platform::configure_shelf(&shelf, settings.edge);
 
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        outer.set_margin_top(12);
-        outer.set_margin_bottom(12);
-        outer.set_margin_start(12);
-        outer.set_margin_end(12);
+        outer.set_margin_top(8);
+        outer.set_margin_bottom(8);
+        outer.set_margin_start(8);
+        outer.set_margin_end(8);
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         header.set_accessible_role(gtk::AccessibleRole::Banner);
@@ -259,7 +265,7 @@ impl Ui {
 
         attach_drop_target(&ui.shelf, &ui, false, None);
         if platform::uses_premapped_shelf() {
-            ui.shelf.set_size_request(300, -1);
+            ui.shelf.set_size_request(SHELF_WIDTH, -1);
             ui.shelf.add_css_class("shelf-dormant");
             ui.revealer.set_opacity(0.0);
             {
@@ -369,7 +375,7 @@ impl Ui {
         for window in self.edges.borrow_mut().drain(..) {
             window.close();
         }
-        if cfg!(target_os = "linux") && !platform::layer_shell_supported() {
+        if !platform::uses_edge_strips() {
             return;
         }
         let Some(display) = gdk::Display::default() else {
@@ -481,16 +487,24 @@ impl Ui {
             row.set_activatable(true);
             row.set_accessible_role(gtk::AccessibleRole::Option);
             let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            content.set_margin_top(7);
-            content.set_margin_bottom(7);
-            content.set_margin_start(8);
-            content.set_margin_end(6);
+            content.set_margin_top(3);
+            content.set_margin_bottom(3);
+            content.set_margin_start(6);
+            content.set_margin_end(4);
 
             let icon = item_icon(&item.path);
             let name = gtk::Label::new(Some(&item.display_name()));
             name.set_hexpand(true);
-            name.set_halign(gtk::Align::Start);
+            // `halign: Start` would shrink the label to its natural width and
+            // strand the space `hexpand` won, so the name is filled to the row
+            // and left-aligned inside itself instead.
+            name.set_halign(gtk::Align::Fill);
+            name.set_xalign(0.0);
             name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+            // Caps only the *requested* width, so a long name never widens the
+            // shelf while still expanding into whatever the row has spare.
+            name.set_max_width_chars(12);
+            name.set_tooltip_text(Some(&item.path.to_string_lossy()));
             let pin = gtk::Button::from_icon_name(if item.pinned {
                 "view-pin-symbolic"
             } else {
@@ -1093,6 +1107,10 @@ impl Ui {
         let autostart = gtk::Switch::builder().active(settings.autostart).build();
         let strip = gtk::SpinButton::with_range(3.0, 16.0, 1.0);
         strip.set_value(settings.strip_size.into());
+        let opacity =
+            gtk::SpinButton::with_range(MIN_SHELF_OPACITY.into(), MAX_SHELF_OPACITY.into(), 1.0);
+        opacity.set_value(settings.shelf_opacity.into());
+        opacity.set_tooltip_text(Some(tr("shelf_opacity_hint")));
         let theme = gtk::DropDown::from_strings(&[tr("system"), tr("light"), tr("dark")]);
         theme.set_selected(match settings.theme {
             Theme::System => 0,
@@ -1138,7 +1156,7 @@ impl Ui {
             .as_ref()
             .and_then(platform::GlobalHotkey::registration_error)
         {
-            global_hotkey_error.set_text(&global_hotkey_error_text(error));
+            global_hotkey_error.set_text(&global_hotkey_error_text(&error));
             global_hotkey_error.set_visible(true);
         }
         add_setting_row(&grid, 0, tr("hide_when_empty"), &auto_hide);
@@ -1147,16 +1165,17 @@ impl Ui {
         add_setting_row(&grid, 3, tr("stack_multi_drop"), &stack_multi_drop);
         add_setting_row(&grid, 4, tr("start_session"), &autostart);
         add_setting_row(&grid, 5, tr("edge_width"), &strip);
-        add_setting_row(&grid, 6, tr("theme"), &theme);
-        add_setting_row(&grid, 7, tr("language"), &language);
-        add_setting_row(&grid, 8, tr("reduced_motion"), &reduced_motion);
-        add_setting_row(&grid, 9, tr("screen_edge"), &edge);
+        add_setting_row(&grid, 6, tr("shelf_opacity"), &opacity);
+        add_setting_row(&grid, 7, tr("theme"), &theme);
+        add_setting_row(&grid, 8, tr("language"), &language);
+        add_setting_row(&grid, 9, tr("reduced_motion"), &reduced_motion);
+        add_setting_row(&grid, 10, tr("screen_edge"), &edge);
         let disabled_outputs_row = if cfg!(target_os = "windows") {
-            add_setting_row(&grid, 10, tr("global_hotkey"), &global_hotkey_control);
-            grid.attach(&global_hotkey_error, 0, 11, 2, 1);
-            12
+            add_setting_row(&grid, 11, tr("global_hotkey"), &global_hotkey_control);
+            grid.attach(&global_hotkey_error, 0, 12, 2, 1);
+            13
         } else {
-            10
+            11
         };
         add_setting_row(
             &grid,
@@ -1215,6 +1234,18 @@ impl Ui {
                 ui.settings.borrow_mut().strip_size = spin.value_as_int();
                 ui.save_settings();
                 ui.rebuild_edges(&ui.app);
+            });
+        }
+        {
+            let ui = self.clone();
+            opacity.connect_value_changed(move |spin| {
+                let percent = spin
+                    .value_as_int()
+                    .clamp(MIN_SHELF_OPACITY.into(), MAX_SHELF_OPACITY.into())
+                    as u8;
+                ui.settings.borrow_mut().shelf_opacity = percent;
+                ui.save_settings();
+                apply_shelf_opacity(percent);
             });
         }
         {
@@ -1957,7 +1988,7 @@ fn item_icon(path: &Path) -> gtk::Widget {
     if is_image(path) {
         let picture = gtk::Picture::new();
         picture.set_content_fit(gtk::ContentFit::Cover);
-        picture.set_size_request(38, 38);
+        picture.set_size_request(28, 28);
         let path = path.to_path_buf();
         if let Some(texture) = THUMBNAIL_CACHE.with(|cache| cache.borrow().get(&path).cloned()) {
             picture.set_paintable(Some(&texture));
@@ -2246,10 +2277,26 @@ fn clipboard_is_sensitive(clipboard: &gdk::Clipboard) -> bool {
     })
 }
 
+/// Set the shelf's background opacity.
+///
+/// The value lives in its own provider so changing it does not mean reparsing
+/// the whole stylesheet, and takes effect on the open shelf immediately. Only
+/// the single-class `.yeet-shelf` rule is written here: the dormant and
+/// drop-active rules use two classes, so they keep winning on specificity no
+/// matter what the user picks.
+fn apply_shelf_opacity(percent: u8) {
+    let alpha = f64::from(percent.clamp(MIN_SHELF_OPACITY, MAX_SHELF_OPACITY)) / 100.0;
+    SHELF_BACKGROUND.with(|background| {
+        background.load_from_data(&format!(
+            ".yeet-shelf {{ background: alpha(@window_bg_color, {alpha}); }}"
+        ));
+    });
+}
+
 fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_data(
-        ".yeet-shelf { background: alpha(@window_bg_color, 0.96); border: 1px solid alpha(@accent_color, 0.55); border-radius: 12px; }\n\
+        ".yeet-shelf { border: 1px solid alpha(@accent_color, 0.55); border-radius: 12px; }\n\
          .yeet-shelf.shelf-dormant { background: transparent; border-color: transparent; }\n\
          .yeet-edge { background: alpha(@accent_color, 0.04); }\n\
          .yeet-edge:drop(active) { background: alpha(@accent_color, 0.65); }\n\
@@ -2259,12 +2306,13 @@ fn install_css() {
          .title { font-weight: 800; letter-spacing: 2px; }\n\
          .drag-preview { padding: 8px; border-radius: 10px; background: @theme_bg_color; border: 1px solid @theme_selected_bg_color; }\n\
          .drag-count { min-width: 20px; min-height: 20px; border-radius: 10px; color: @theme_selected_fg_color; background: @theme_selected_bg_color; font-weight: bold; }\n\
-         .boxed-list row { border-radius: 8px; margin-bottom: 5px; transition: 160ms ease-in-out; }\n\
+         .boxed-list row { border-radius: 8px; margin-bottom: 3px; transition: 160ms ease-in-out; }\n\
          .row-actions { opacity: 0.42; transition: opacity 160ms ease-in-out; }\n\
          .row-actions.actions-revealed, .boxed-list row:selected .row-actions { opacity: 1; }\n\
          .row-actions.no-motion { transition: none; }\n\
-         .row-action, .touch-target { min-width: 44px; min-height: 44px; padding: 8px; }\n\
-         .context-action { min-height: 44px; padding: 8px 12px; }\n\
+         .row-action { min-width: 30px; min-height: 30px; padding: 3px; }\n\
+         .touch-target { min-width: 32px; min-height: 32px; padding: 4px; }\n\
+         .context-action { min-height: 34px; padding: 6px 10px; }\n\
          .boxed-list row:selected { background: @theme_selected_bg_color; color: @theme_selected_fg_color; }\n\
          .boxed-list row:focus-visible, button:focus-visible, switch:focus-visible, spinbutton:focus-visible, dropdown:focus-visible { outline: 3px solid @theme_selected_bg_color; outline-offset: -3px; }\n\
          .boxed-list row:selected:focus-visible { outline-color: @theme_selected_fg_color; }",
@@ -2275,6 +2323,13 @@ fn install_css() {
             &provider,
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
+        SHELF_BACKGROUND.with(|background| {
+            gtk::style_context_add_provider_for_display(
+                &display,
+                background,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        });
     }
 }
 

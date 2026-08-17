@@ -128,6 +128,68 @@ mod backend {
         }
     }
 
+    const STATUS_NOTIFIER_WATCHER: &str = "org.kde.StatusNotifierWatcher";
+
+    /// Publish the StatusNotifier item, waiting for a host if there is none yet.
+    ///
+    /// A stock GNOME session runs no StatusNotifierWatcher at all, and users
+    /// typically install an AppIndicator extension only after noticing the icon
+    /// is missing. Failing once at start-up would leave Yeet without a tray for
+    /// the rest of the session, so the registration is retried as soon as a
+    /// watcher claims the bus name.
+    async fn register_tray(tray: YeetTray) -> Option<ksni::Handle<YeetTray>> {
+        let sandboxed = ashpd::is_sandboxed();
+        match tray.clone().disable_dbus_name(sandboxed).spawn().await {
+            Ok(handle) => return Some(handle),
+            Err(error) => eprintln!("yeet: {}", tray_unavailable_hint(&error)),
+        }
+        loop {
+            wait_for_status_notifier_watcher().await.ok()?;
+            match tray.clone().disable_dbus_name(sandboxed).spawn().await {
+                Ok(handle) => {
+                    eprintln!("yeet: notification area icon registered");
+                    return Some(handle);
+                }
+                Err(error) => eprintln!("yeet: status notifier still unavailable: {error}"),
+            }
+        }
+    }
+
+    fn tray_unavailable_hint(error: &ksni::Error) -> String {
+        if std::env::var("XDG_CURRENT_DESKTOP")
+            .is_ok_and(|desktop| desktop.to_ascii_lowercase().contains("gnome"))
+        {
+            return format!(
+                "no notification area on this GNOME session ({error}). Install the \
+                 AppIndicator extension for a tray icon; Yeet runs fine without one."
+            );
+        }
+        format!("status notifier unavailable: {error}")
+    }
+
+    /// Resolve once a StatusNotifierWatcher takes ownership of its bus name.
+    ///
+    /// Only a fresh acquisition counts: this runs after a registration attempt
+    /// has already failed, so returning on the current owner would spin.
+    async fn wait_for_status_notifier_watcher() -> ashpd::zbus::Result<()> {
+        use futures_util::StreamExt;
+
+        let connection = ashpd::zbus::Connection::session().await?;
+        let dbus = ashpd::zbus::fdo::DBusProxy::new(&connection).await?;
+        let mut changes = dbus.receive_name_owner_changed().await?;
+        while let Some(signal) = changes.next().await {
+            let Ok(arguments) = signal.args() else {
+                continue;
+            };
+            if arguments.name().as_str() == STATUS_NOTIFIER_WATCHER
+                && arguments.new_owner().is_some()
+            {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
     pub fn install(sender: Sender<DesktopAction>) -> Backend {
         let count = Arc::new(AtomicUsize::new(0));
         let thread_count = count.clone();
@@ -149,14 +211,7 @@ mod backend {
                         sender: sender.clone(),
                         count: thread_count,
                     };
-                    let _tray_handle =
-                        match tray.disable_dbus_name(ashpd::is_sandboxed()).spawn().await {
-                            Ok(handle) => Some(handle),
-                            Err(error) => {
-                                eprintln!("yeet: status notifier unavailable: {error}");
-                                None
-                            }
-                        };
+                    let _tray_handle = register_tray(tray).await;
                     std::future::pending::<()>().await;
                 });
             })

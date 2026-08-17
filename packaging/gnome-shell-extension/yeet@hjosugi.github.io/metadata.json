@@ -1,0 +1,8 @@
+{
+  "uuid": "yeet@hjosugi.github.io",
+  "name": "Yeet shelf",
+  "description": "Keeps the Yeet drag-and-drop shelf above other windows and pinned to the screen edge. GNOME implements neither wlr-layer-shell nor any way for a Wayland client to raise or place itself, so this does it from the compositor side. Without it Yeet falls back to running through XWayland.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "url": "https://github.com/hjosugi/yeet",
+  "settings-schema": ""
+}

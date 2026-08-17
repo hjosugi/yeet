@@ -21,6 +21,10 @@ Options:\n  --toggle   Show or hide the shelf\n  --clear    Remove every item\n 
 
 fn main() -> glib::ExitCode {
     platform::attach_parent_console();
+    // Must precede every GTK call: the shelf backend decides which GDK backend
+    // the process talks to, and `GDK_BACKEND` is only read when the display is
+    // opened.
+    platform::prepare_backend();
     let local_arguments: Vec<_> = std::env::args_os().collect();
     if local_arguments.iter().any(|argument| argument == "--help") {
         print!("{HELP}");

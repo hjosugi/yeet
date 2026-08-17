@@ -82,6 +82,10 @@ fn english(key: &str) -> &'static str {
         "stack_multi_drop" => "Stack multi-item drops",
         "start_session" => "Start with the session",
         "edge_width" => "Edge width",
+        "shelf_opacity" => "Shelf opacity (%)",
+        "shelf_opacity_hint" => {
+            "How opaque the shelf background is. Lower values let the window underneath show through."
+        }
         "screen_edge" => "Screen edge",
         "left" => "Left",
         "right" => "Right",
@@ -146,6 +150,10 @@ fn japanese(key: &str) -> &'static str {
         "stack_multi_drop" => "複数ドロップをまとめて選択",
         "start_session" => "ログイン時に起動",
         "edge_width" => "画面端の幅",
+        "shelf_opacity" => "シェルフの不透明度 (%)",
+        "shelf_opacity_hint" => {
+            "シェルフ背景の不透明度です。小さくすると下のウィンドウが透けます。"
+        }
         "screen_edge" => "表示する画面端",
         "left" => "左",
         "right" => "右",
@@ -211,6 +219,8 @@ mod tests {
         "stack_multi_drop",
         "start_session",
         "edge_width",
+        "shelf_opacity",
+        "shelf_opacity_hint",
         "screen_edge",
         "left",
         "right",

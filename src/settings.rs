@@ -8,9 +8,25 @@ use std::path::PathBuf;
 
 pub const DEFAULT_GLOBAL_HOTKEY: &str = "Ctrl+Alt+Y";
 
+/// Shelf width in logical pixels.
+///
+/// Every row spends this budget on an icon, the file name and three action
+/// buttons, so the width is what decides how much of a name stays readable.
+/// Shared with the platform backends, which position the shelf themselves.
+pub const SHELF_WIDTH: i32 = 400;
+
+/// Shelf background opacity in percent, and the range the UI offers.
+///
+/// The floor is well above zero on purpose: a shelf you cannot see is a shelf
+/// you cannot drop onto, and the window has no decorations to fall back on.
+pub const DEFAULT_SHELF_OPACITY: u8 = 96;
+pub const MIN_SHELF_OPACITY: u8 = 20;
+pub const MAX_SHELF_OPACITY: u8 = 100;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HotkeyBinding {
     normalized: String,
+    key_name: String,
     modifiers: u32,
     virtual_key: u32,
 }
@@ -76,6 +92,7 @@ impl HotkeyBinding {
 
         Ok(Self {
             normalized: names.join("+"),
+            key_name,
             modifiers,
             virtual_key,
         })
@@ -91,6 +108,64 @@ impl HotkeyBinding {
 
     pub fn virtual_key(&self) -> u32 {
         self.virtual_key
+    }
+
+    /// The key as an X11 keysym name, which is how both shortcut syntaxes
+    /// below spell the non-modifier key.
+    fn keysym_name(&self) -> String {
+        match self.key_name.as_str() {
+            "Enter" => "Return".to_owned(),
+            "Space" => "space".to_owned(),
+            "PageUp" => "Page_Up".to_owned(),
+            "PageDown" => "Page_Down".to_owned(),
+            name if name.len() == 1 && name.as_bytes()[0].is_ascii_alphabetic() => {
+                name.to_ascii_lowercase()
+            }
+            name => name.to_owned(),
+        }
+    }
+
+    /// The shortcut in the syntax of the XDG GlobalShortcuts specification,
+    /// for example `CTRL+ALT+y`. KDE's portal backend expects this form.
+    pub fn portal_trigger(&self) -> String {
+        let mut parts = Vec::with_capacity(5);
+        if self.modifiers & Self::CONTROL != 0 {
+            parts.push("CTRL".to_owned());
+        }
+        if self.modifiers & Self::ALT != 0 {
+            parts.push("ALT".to_owned());
+        }
+        if self.modifiers & Self::SHIFT != 0 {
+            parts.push("SHIFT".to_owned());
+        }
+        if self.modifiers & Self::WIN != 0 {
+            parts.push("SUPER".to_owned());
+        }
+        parts.push(self.keysym_name());
+        parts.join("+")
+    }
+
+    /// The shortcut as a GTK accelerator, for example `<Control><Alt>y`.
+    ///
+    /// GNOME's portal backend parses preferred triggers with GTK's accelerator
+    /// parser rather than the specification syntax, and silently declines to
+    /// bind anything it cannot parse.
+    pub fn gtk_accelerator(&self) -> String {
+        let mut accelerator = String::new();
+        if self.modifiers & Self::CONTROL != 0 {
+            accelerator.push_str("<Control>");
+        }
+        if self.modifiers & Self::ALT != 0 {
+            accelerator.push_str("<Alt>");
+        }
+        if self.modifiers & Self::SHIFT != 0 {
+            accelerator.push_str("<Shift>");
+        }
+        if self.modifiers & Self::WIN != 0 {
+            accelerator.push_str("<Super>");
+        }
+        accelerator.push_str(&self.keysym_name());
+        accelerator
     }
 }
 
@@ -184,6 +259,11 @@ pub struct Settings {
     pub stack_multi_drop: bool,
     pub autostart: bool,
     pub strip_size: i32,
+    /// Shelf background opacity as a percentage.
+    ///
+    /// Only the panel behind the shelf is affected; its contents stay fully
+    /// opaque so file names remain readable over whatever is underneath.
+    pub shelf_opacity: u8,
     pub theme: Theme,
     pub language: Language,
     pub reduced_motion: bool,
@@ -201,6 +281,7 @@ impl Default for Settings {
             stack_multi_drop: false,
             autostart: false,
             strip_size: 6,
+            shelf_opacity: DEFAULT_SHELF_OPACITY,
             theme: Theme::System,
             language: Language::System,
             reduced_motion: false,
@@ -224,6 +305,9 @@ impl Settings {
 
     pub fn normalize(&mut self) {
         self.strip_size = self.strip_size.clamp(3, 16);
+        self.shelf_opacity = self
+            .shelf_opacity
+            .clamp(MIN_SHELF_OPACITY, MAX_SHELF_OPACITY);
         self.global_hotkey = HotkeyBinding::parse(&self.global_hotkey)
             .map(|binding| binding.normalized().to_owned())
             .unwrap_or_else(|_| DEFAULT_GLOBAL_HOTKEY.to_owned());
@@ -275,6 +359,7 @@ mod tests {
         assert!(settings.deduplicate_items);
         assert!(!settings.stack_multi_drop);
         assert_eq!(settings.strip_size, 6);
+        assert_eq!(settings.shelf_opacity, DEFAULT_SHELF_OPACITY);
         assert_eq!(settings.theme, Theme::System);
         assert_eq!(settings.language, Language::System);
         assert!(!settings.reduced_motion);
@@ -314,6 +399,44 @@ mod tests {
         assert_eq!(settings.strip_size, 16);
         assert_eq!(settings.global_hotkey, "Ctrl+Shift+F12");
         assert_eq!(settings.disabled_outputs, ["DP-1", "HDMI-A-1"]);
+    }
+
+    #[test]
+    fn shelf_opacity_never_normalizes_to_an_invisible_shelf() {
+        // A hand-edited settings file must not be able to make the shelf
+        // impossible to see, since it has no decorations to fall back on.
+        let mut transparent = Settings {
+            shelf_opacity: 0,
+            ..Settings::default()
+        };
+        transparent.normalize();
+        assert_eq!(transparent.shelf_opacity, MIN_SHELF_OPACITY);
+
+        let mut over_opaque = Settings {
+            shelf_opacity: 250,
+            ..Settings::default()
+        };
+        over_opaque.normalize();
+        assert_eq!(over_opaque.shelf_opacity, MAX_SHELF_OPACITY);
+
+        let mut chosen = Settings {
+            shelf_opacity: 65,
+            ..Settings::default()
+        };
+        chosen.normalize();
+        assert_eq!(chosen.shelf_opacity, 65);
+    }
+
+    #[test]
+    fn settings_written_before_shelf_opacity_existed_get_the_default() {
+        let legacy = r#"{"auto_hide": false, "strip_size": 9}"#;
+
+        let mut settings: Settings = serde_json::from_str(legacy).unwrap();
+        settings.normalize();
+
+        assert!(!settings.auto_hide);
+        assert_eq!(settings.strip_size, 9);
+        assert_eq!(settings.shelf_opacity, DEFAULT_SHELF_OPACITY);
     }
 
     #[test]
@@ -385,5 +508,30 @@ mod tests {
             HotkeyBinding::parse("Ctrl++Y").unwrap_err(),
             HotkeyParseError::EmptySegment
         );
+    }
+
+    #[test]
+    fn portal_and_gtk_shortcut_syntaxes_agree_on_the_keysym() {
+        let binding = HotkeyBinding::parse(DEFAULT_GLOBAL_HOTKEY).unwrap();
+
+        // Uppercase `Y` would mean shift+y to an X keysym parser, so the
+        // letter has to be lowered in both syntaxes.
+        assert_eq!(binding.portal_trigger(), "CTRL+ALT+y");
+        assert_eq!(binding.gtk_accelerator(), "<Control><Alt>y");
+    }
+
+    #[test]
+    fn shortcut_syntaxes_use_x_keysym_names_for_named_keys() {
+        let page_down = HotkeyBinding::parse("Super+PageDown").unwrap();
+        assert_eq!(page_down.portal_trigger(), "SUPER+Page_Down");
+        assert_eq!(page_down.gtk_accelerator(), "<Super>Page_Down");
+
+        let enter = HotkeyBinding::parse("Ctrl+Shift+Enter").unwrap();
+        assert_eq!(enter.portal_trigger(), "CTRL+SHIFT+Return");
+        assert_eq!(enter.gtk_accelerator(), "<Control><Shift>Return");
+
+        let function = HotkeyBinding::parse("Alt+F12").unwrap();
+        assert_eq!(function.portal_trigger(), "ALT+F12");
+        assert_eq!(function.gtk_accelerator(), "<Alt>F12");
     }
 }
