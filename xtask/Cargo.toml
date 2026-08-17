@@ -1,0 +1,17 @@
+[package]
+name = "xtask"
+version = "0.5.3"
+edition = "2024"
+rust-version = "1.92"
+description = "Build and package Yeet's release artifacts"
+publish = false
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+flate2 = "1.1"
+sha2 = "0.10"
+tar = "0.4"
+zip = { version = "5.1", default-features = false, features = ["deflate"] }

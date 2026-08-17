@@ -19,6 +19,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y
           libgtk-4-dev libwayland-dev wayland-protocols
           meson ninja-build
+          patchelf desktop-file-utils librsvg2-dev libgdk-pixbuf-2.0-dev file
       - name: Build gtk4-layer-shell
         shell: bash
         run: |
@@ -30,32 +31,29 @@ jobs:
           ninja -C /tmp/gtk4-layer-shell/build
           sudo ninja -C /tmp/gtk4-layer-shell/build install
           sudo ldconfig
-      - run: cargo build --release --locked
       - name: Verify tag matches Cargo version
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          cargo_version="$(cargo xtask version)"
           test "$version" = "$cargo_version"
-      - name: Stage archive
+      - name: Package tarball and AppImage
+        shell: bash
+        run: |
+          cargo xtask package linux-tar
+          cargo xtask package appimage
+      - name: Build the installer
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          root="yeet-${version}-linux-x86_64"
-          install -Dm755 target/release/yeet "$root/bin/yeet"
-          install -Dm644 packaging/linux/io.github.hjosugi.Yeet.desktop "$root/share/applications/io.github.hjosugi.Yeet.desktop"
-          install -Dm644 packaging/linux/io.github.hjosugi.Yeet.metainfo.xml "$root/share/metainfo/io.github.hjosugi.Yeet.metainfo.xml"
-          install -Dm644 assets/io.github.hjosugi.Yeet.svg "$root/share/icons/hicolor/scalable/apps/io.github.hjosugi.Yeet.svg"
-          install -Dm644 packaging/linux/yeet.1 "$root/share/man/man1/yeet.1"
-          install -Dm644 LICENSE "$root/share/licenses/yeet/LICENSE"
-          tar -czf "${root}.tar.gz" "$root"
-          sha256sum "${root}.tar.gz" > SHA256SUMS-linux.txt
+          cargo build --release --locked -p yeetup
+          install -Dm755 target/release/yeetup "dist/yeetup-${version}-linux-x86_64"
+      - name: Write checksums
+        run: cargo xtask checksums linux
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux
-          path: |
-            yeet-*.tar.gz
-            SHA256SUMS-linux.txt
+          path: dist/*
 
   windows:
     runs-on: windows-latest
@@ -121,8 +119,8 @@ jobs:
       - name: Archive portable build
         shell: msys2 {0}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          zip -r "yeet-${version}-windows-x64.zip" "yeet-${version}-windows-x64"
+          cargo xtask package windows-zip
+          cp dist/*.zip .
       - name: Build Windows installer
         shell: pwsh
         run: |
@@ -149,30 +147,55 @@ jobs:
           finally {
             Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
           }
-      - name: Generate and validate winget submission
-        shell: pwsh
+      - name: Build the installer
+        shell: msys2 {0}
         run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')
-          $installer = "yeet-$version-windows-x64-setup.exe"
-          ./packaging/windows/New-WingetManifest.ps1 -Version $version -Installer $installer -OutputDirectory winget
-          ./packaging/windows/Test-WingetManifest.ps1 -Version $version -ManifestDirectory winget -Installer $installer
-          ./packaging/windows/New-WingetSubmission.ps1 -Version $version -ManifestDirectory winget -OutputDirectory winget-submission
-          Compress-Archive -Path winget-submission/manifests `
-            -DestinationPath "yeet-$version-winget-pkgs.zip" -Force
+          version="${GITHUB_REF_NAME#v}"
+          cargo build --release --locked -p yeetup
+          cp target/release/yeetup.exe "yeetup-${version}-windows-x64.exe"
       - name: Write Windows checksums
         shell: msys2 {0}
-        run: sha256sum yeet-*.zip yeet-*-setup.exe > SHA256SUMS-windows.txt
+        run: sha256sum yeet-*.zip yeet-*-setup.exe yeetup-*.exe > SHA256SUMS-windows.txt
       - uses: actions/upload-artifact@v4
         with:
           name: release-windows
           path: |
             yeet-*.zip
             yeet-*-setup.exe
-            winget/*.yaml
+            yeetup-*.exe
             SHA256SUMS-windows.txt
 
+  # Yeet has no macOS platform backend yet: this proves the GTK build keeps
+  # compiling and publishes a disk image, but the shelf there is an ordinary
+  # window without the always-on-top, tray and global-shortcut integration the
+  # Linux and Windows backends provide. A macOS failure must not hold back the
+  # platforms that are supported, so the job is allowed to fail.
+  macos:
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install GTK
+        run: brew install gtk4 pkg-config
+      - name: Package disk image and installer
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          test "$version" = "$(cargo xtask version)"
+          cargo xtask package macos-dmg
+          cargo build --release --locked -p yeetup
+          install -m755 target/release/yeetup "dist/yeetup-${version}-macos-$(uname -m)"
+          cargo xtask checksums macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: dist/*
+
   publish:
-    needs: [linux, windows]
+    # macOS is allowed to fail, so it gates only the wait, never the release.
+    needs: [linux, windows, macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

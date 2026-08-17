@@ -1,0 +1,25 @@
+[package]
+name = "yeetup"
+version = "0.5.3"
+edition = "2024"
+rust-version = "1.92"
+description = "Cross-platform installer and updater for Yeet"
+license = "MIT"
+repository = "https://github.com/hjosugi/yeet"
+
+[[bin]]
+name = "yeetup"
+path = "src/main.rs"
+
+[dependencies]
+directories = "6.0"
+flate2 = "1.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tar = "0.4"
+ureq = { version = "3.4", default-features = false, features = ["rustls", "json"] }
+zip = { version = "5.1", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3.20"

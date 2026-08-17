@@ -200,7 +200,7 @@ forward their command line to the primary instance.
 | Arch | AUR-ready `yeet-shelf` and `yeet-shelf-git` PKGBUILDs in-repo |
 | Any Linux | Flatpak `io.github.hjosugi.Yeet` (Flathub); note: layer-shell OK in Flatpak |
 | Nix | in-repo derivation |
-| Windows | Inno Setup installer + portable zip; winget metadata after signing |
+| Windows | Inno Setup installer + portable zip + Scoop bucket; `yeetup` for install/update |
 | CI | GitHub Actions: Linux + Windows build on PR; artifacts on tag |
 
 Binary name `yeet`; the Arch package name is `yeet-shelf` to avoid
@@ -238,7 +238,8 @@ collisions with unrelated tools.
   semantics, autostart, S2 spike.
 - **M4 Settings & polish** — settings UI, theming, i18n (en/ja), animations,
   accessibility, clipboard capture.
-- **M5 Packaging & release** — Flatpak/AUR/Nix/Inno+winget, release CI,
+- **M5 Packaging & release** — Flatpak/AUR/Nix/AppImage/Inno/Scoop, `xtask`
+  packaging and the `yeetup` installer, release CI,
   demo media, v1.0 checklist.
 
 The complete work breakdown lives in the GitHub issues, one issue per task,

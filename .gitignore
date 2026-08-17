@@ -17,3 +17,6 @@ CMakeUserPresets.json
 .codex/skills/graphify/
 .codex/hooks.json
 graphify-out/
+
+# Release artifacts produced by `cargo xtask package`
+/dist/

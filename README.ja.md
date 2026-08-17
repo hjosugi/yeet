@@ -107,6 +107,35 @@ portable ZIPを取得することもできます。shelfが空のあいだYeet�
 
 ## Linux へインストール
 
+### AppImage（依存なし）
+
+AppImageはGTK 4のruntimeを同梱しているため、他に何もインストールせずに
+どのディストリビューションでも動きます。
+
+```sh
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.5.3-linux-x86_64.AppImage
+chmod +x yeet-0.5.3-linux-x86_64.AppImage
+./yeet-0.5.3-linux-x86_64.AppImage --hidden
+```
+
+### yeetup（インストール・更新・削除）
+
+`yeetup`はプラットフォームに合ったリリースを取得し、公開チェックサムで検証し、
+インストールして、書き込んだファイルを記録します。
+
+```sh
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.5.3-linux-x86_64
+chmod +x yeetup-0.5.3-linux-x86_64
+./yeetup-0.5.3-linux-x86_64 install      # sudo不要、~/.local へ
+```
+
+以降は`yeetup update`で最新リリースへ更新、`yeetup status`で状態確認、
+`yeetup uninstall`で追加したファイルだけを正確に削除します。`--system`で
+`/usr/local`へ、`--prefix DIR`で任意の場所へインストールできます。
+同じバイナリをWindowsとmacOS向けにも公開しています。
+
+### リリースアーカイブ
+
 現在のリリースアーカイブをダウンロードし、`/usr/local` へインストールします。
 
 ```sh
@@ -117,10 +146,16 @@ curl -fLO "$base/SHA256SUMS-linux.txt"
 grep "yeet-${version}-linux-x86_64.tar.gz" SHA256SUMS-linux.txt | sha256sum -c -
 tar -xzf "yeet-${version}-linux-x86_64.tar.gz"
 root="yeet-${version}-linux-x86_64"
-sudo cp -a "$root/bin/." /usr/local/bin/
-sudo cp -a "$root/share/." /usr/local/share/
+sudo install -Dm755 "$root/bin/yeet" /usr/local/bin/yeet
+(cd "$root/share" && find . -type f \
+  -exec sudo install -Dm644 '{}' "/usr/local/share/{}" \;)
 yeet --hidden
 ```
+
+`share`ディレクトリ全体を`cp -a`せず、1ファイルずつインストールしています。
+Archなどは`/usr/local/share/man`を`/usr/share/man`へのsymlinkとして配置して
+おり、再帰コピーはそのsymlinkを書き込み先として辿らず、ディレクトリで
+置き換えようとして失敗するためです。
 
 先にGTKのruntimeをインストールしてください。
 

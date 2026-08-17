@@ -163,6 +163,35 @@ SmartScreen and runtime details.
 
 ## Install on Linux
 
+### AppImage (no dependencies)
+
+The AppImage carries its own GTK 4 runtime, so it runs on any distribution
+without installing anything else:
+
+```sh
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.5.3-linux-x86_64.AppImage
+chmod +x yeet-0.5.3-linux-x86_64.AppImage
+./yeet-0.5.3-linux-x86_64.AppImage --hidden
+```
+
+### yeetup (installs, updates and removes)
+
+`yeetup` downloads the release for your platform, verifies it against the
+published checksums, installs it and records what it wrote:
+
+```sh
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.5.3-linux-x86_64
+chmod +x yeetup-0.5.3-linux-x86_64
+./yeetup-0.5.3-linux-x86_64 install      # into ~/.local, no sudo
+```
+
+Later, `yeetup update` moves to the newest release, `yeetup status` reports what
+is installed, and `yeetup uninstall` removes exactly the files it added. Use
+`--system` to install into `/usr/local` instead, or `--prefix DIR` for any other
+location. The same binary is published for Windows and macOS.
+
+### Release archive
+
 Download the current release archive and install it under `/usr/local`:
 
 ```sh
@@ -173,10 +202,16 @@ curl -fLO "$base/SHA256SUMS-linux.txt"
 grep "yeet-${version}-linux-x86_64.tar.gz" SHA256SUMS-linux.txt | sha256sum -c -
 tar -xzf "yeet-${version}-linux-x86_64.tar.gz"
 root="yeet-${version}-linux-x86_64"
-sudo cp -a "$root/bin/." /usr/local/bin/
-sudo cp -a "$root/share/." /usr/local/share/
+sudo install -Dm755 "$root/bin/yeet" /usr/local/bin/yeet
+(cd "$root/share" && find . -type f \
+  -exec sudo install -Dm644 '{}' "/usr/local/share/{}" \;)
 yeet --hidden
 ```
+
+Each file is installed individually rather than with `cp -a` on the whole
+`share` directory. Distributions such as Arch ship `/usr/local/share/man` as a
+symlink into `/usr/share/man`, and a recursive copy tries to replace that
+symlink with a directory instead of writing through it.
 
 Install the GTK runtime first:
 
@@ -232,7 +267,8 @@ builds use the UCRT64 GTK package in MSYS2; CI contains the exact setup.
 PDF previews use `pdftoppm` when Poppler is installed and otherwise open in
 the system's default PDF application.
 
-See [Wayland compositor verification](docs/compositors.md) and
+See [Wayland compositor verification](docs/compositors.md),
+[Yeet on GNOME](docs/gnome.md) and
 [Windows behavior and limitations](docs/windows.md) before filing a
 platform-specific bug. Contributors updating README media should follow the
 [reproducible demo-capture contract](docs/demo-capture.md); missing captures are

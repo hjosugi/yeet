@@ -103,7 +103,6 @@ the source and destination instead.
 ## SmartScreen and signing
 
 Development artifacts are unsigned and can trigger SmartScreen reputation
-warnings. A stable public release should use an Authenticode certificate and
-sign the executable and installer before publishing a winget manifest. See the
-[Windows release guide](windows-release.md) for the optional CI signing flow and
-the reproducible `winget-pkgs` submission bundle.
+warnings. A stable public release should use an Authenticode certificate to
+sign the executable and installer. See the
+[Windows release guide](windows-release.md) for the optional CI signing flow.
