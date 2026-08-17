@@ -55,6 +55,18 @@ winresource = "0.1.31"
 [dev-dependencies]
 tempfile = "3.20"
 
+[profile.dev]
+# Full debug info for every crate in the tree dominates a clean debug build.
+# Line tables keep backtraces and panic locations useful, which is what the
+# information is actually used for here.
+debug = "line-tables-only"
+
+# Nobody steps into gtk4-sys or zbus, so dependencies carry no debug info at
+# all. This is the single biggest cut to a cold build and to the size of
+# target/.
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 lto = "thin"
 strip = true

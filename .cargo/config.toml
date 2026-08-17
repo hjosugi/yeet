@@ -1,2 +1,14 @@
 [alias]
-xtask = "run --release --package xtask --"
+# Debug, not release: xtask copies files and shells out to other tools, so it
+# spends no measurable time in its own code, and building it unoptimised is
+# faster (8s versus 12s cold) every time the packaging workflow is run.
+xtask = "run --package xtask --"
+
+# Linking is not the bottleneck in this tree — an incremental debug relink is
+# about a second, and `lld` measured *slower* than the default linker for a
+# release relink (32s versus 27s) on the machine this was tuned on. If a
+# different linker helps on yours, set it here rather than in an environment
+# variable: changing `RUSTFLAGS` invalidates every cached artifact.
+#
+# [target.x86_64-unknown-linux-gnu]
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
