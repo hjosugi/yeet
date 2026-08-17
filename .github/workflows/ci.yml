@@ -122,6 +122,12 @@ jobs:
       - name: Build
         shell: msys2 {0}
         run: cargo build --release --locked
+      # The release workflow publishes these two, and both are only ever
+      # compiled on Windows there. Building them here means a break shows up on
+      # a pull request instead of halfway through a tagged release.
+      - name: Build the packaging tool and installer
+        shell: msys2 {0}
+        run: cargo build --release --locked -p xtask -p yeetup
       - name: Launch smoke test
         shell: msys2 {0}
         run: ./target/release/yeet.exe --version | grep '^Yeet '

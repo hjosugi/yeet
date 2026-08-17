@@ -33,7 +33,7 @@ To create the base64 value locally in PowerShell:
 For a local signing test on Windows with the Windows SDK installed:
 
 ```powershell
-$version = "0.5.3"
+$version = "0.6.0"
 $password = Read-Host "PFX password" -AsSecureString
 ./packaging/windows/Sign-WindowsArtifacts.ps1 `
   -CertificatePath ./yeet-code-signing.pfx `

@@ -38,7 +38,7 @@ root_lock_version="$(
 assert_contains packaging/nix/default.nix "  version = \"$version\";"
 assert_contains packaging/windows/yeet.iss "  #define MyAppVersion \"$version\""
 assert_contains packaging/linux/yeet.1 \
-  ".TH YEET 1 \"July 2026\" \"Yeet $version\" \"User Commands\""
+  ".TH YEET 1 \"August 2026\" \"Yeet $version\" \"User Commands\""
 assert_contains README.md "version=$version"
 assert_contains README.ja.md "version=$version"
 assert_contains docs/windows-release.md "\$version = \"$version\""

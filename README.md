@@ -11,7 +11,7 @@ leaves the shelf, it disappears.
 
 ![Yeet shelf holding two files](docs/screenshots/yeet-linux-dark.png)
 
-> Development status: **main is targeting v0.5.3**. The application and Cargo
+> Development status: **main is targeting v0.6.0**. The application and Cargo
 > package are now named simply Yeet and use one native Rust/GTK 4 codebase. The
 > v0.5 line adds stable item identities plus configurable deduplication and
 > multi-drop selection, with explicit copy/move/cancel drag completion policy,
@@ -171,9 +171,9 @@ The AppImage carries its own GTK 4 runtime, so it runs on any distribution
 without installing anything else:
 
 ```sh
-curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.5.3-linux-x86_64.AppImage
-chmod +x yeet-0.5.3-linux-x86_64.AppImage
-./yeet-0.5.3-linux-x86_64.AppImage --hidden
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.6.0-linux-x86_64.AppImage
+chmod +x yeet-0.6.0-linux-x86_64.AppImage
+./yeet-0.6.0-linux-x86_64.AppImage --hidden
 ```
 
 ### yeetup (installs, updates and removes)
@@ -182,9 +182,9 @@ chmod +x yeet-0.5.3-linux-x86_64.AppImage
 published checksums, installs it and records what it wrote:
 
 ```sh
-curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.5.3-linux-x86_64
-chmod +x yeetup-0.5.3-linux-x86_64
-./yeetup-0.5.3-linux-x86_64 install      # into ~/.local, no sudo
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.6.0-linux-x86_64
+chmod +x yeetup-0.6.0-linux-x86_64
+./yeetup-0.6.0-linux-x86_64 install      # into ~/.local, no sudo
 ```
 
 Later, `yeetup update` moves to the newest release, `yeetup status` reports what
@@ -197,7 +197,7 @@ location. The same binary is published for Windows and macOS.
 Download the current release archive and install it under `/usr/local`:
 
 ```sh
-version=0.5.3
+version=0.6.0
 base="https://github.com/hjosugi/yeet/releases/download/v${version}"
 curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
 curl -fLO "$base/SHA256SUMS-linux.txt"

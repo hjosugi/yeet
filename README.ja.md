@@ -10,7 +10,7 @@ Wayland と Windows 向けの、Yoink ライクな軽量ドラッグ＆ドロッ
 
 ![2つのファイルを保持したYeetシェルフ](docs/screenshots/yeet-linux-dark.png)
 
-開発中の main は **v0.5.3 を対象**にしています。application、Cargo packageとも
+開発中の main は **v0.6.0 を対象**にしています。application、Cargo packageとも
 名前は単にYeetで、native Rust/GTK 4の単一codebaseです。v0.5系ではv0.4の全機能に
 加え、itemごとの安定したID、重複itemを許可する設定、複数dropをまとめて選択する
 設定、copy/move/cancelを明示的に扱うdrag完了policyを実装しています。ただし、
@@ -116,9 +116,9 @@ AppImageはGTK 4のruntimeを同梱しているため、他に何もインスト
 どのディストリビューションでも動きます。
 
 ```sh
-curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.5.3-linux-x86_64.AppImage
-chmod +x yeet-0.5.3-linux-x86_64.AppImage
-./yeet-0.5.3-linux-x86_64.AppImage --hidden
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.6.0-linux-x86_64.AppImage
+chmod +x yeet-0.6.0-linux-x86_64.AppImage
+./yeet-0.6.0-linux-x86_64.AppImage --hidden
 ```
 
 ### yeetup（インストール・更新・削除）
@@ -127,9 +127,9 @@ chmod +x yeet-0.5.3-linux-x86_64.AppImage
 インストールして、書き込んだファイルを記録します。
 
 ```sh
-curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.5.3-linux-x86_64
-chmod +x yeetup-0.5.3-linux-x86_64
-./yeetup-0.5.3-linux-x86_64 install      # sudo不要、~/.local へ
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.6.0-linux-x86_64
+chmod +x yeetup-0.6.0-linux-x86_64
+./yeetup-0.6.0-linux-x86_64 install      # sudo不要、~/.local へ
 ```
 
 以降は`yeetup update`で最新リリースへ更新、`yeetup status`で状態確認、
@@ -142,7 +142,7 @@ chmod +x yeetup-0.5.3-linux-x86_64
 現在のリリースアーカイブをダウンロードし、`/usr/local` へインストールします。
 
 ```sh
-version=0.5.3
+version=0.6.0
 base="https://github.com/hjosugi/yeet/releases/download/v${version}"
 curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
 curl -fLO "$base/SHA256SUMS-linux.txt"
