@@ -71,6 +71,9 @@ portable ZIPを取得します。起動後、既定のCtrl+Alt+Yまたは通知�
 - Windowsのglobal shortcutは既定のCtrl+Alt+Yから変更できます。登録が競合した場合は
   Settingsへ明確なerrorを表示し、可能なら以前のshortcutを復元します。変更後も同じ
   shortcutのdouble pressでclipboardを取り込みます。
+- shelfはgripをdragして好きな位置へ移動でき、次回もその位置に出ます。設定で
+  画面端を選び直すと、その端へのanchorに戻ります。
+- shelf背景の不透明度を設定できます。
 - multi-monitor strip、永続化、preview、日英UI、keyboard操作、theme、autostartを
   同じRust/GTK 4実装で提供します。
 

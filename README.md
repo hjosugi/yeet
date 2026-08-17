@@ -115,7 +115,9 @@ environments.
   shelf is shown. A failed shortcut change reports the conflict and restores
   the previous registration when possible.
 - Clipboard capture, image/text preview, context actions, persistent settings,
-  configurable edge width and per-user autostart.
+  configurable edge width, shelf opacity and per-user autostart.
+- Drag the shelf by its grip to put it anywhere, and it reappears there next
+  time. Choosing a screen edge in settings anchors it back to that edge.
 - Full keyboard navigation and GTK accessibility metadata, English/Japanese UI,
   reduced-motion support, and Linux StatusNotifier plus native Windows tray
   menus.

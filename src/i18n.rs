@@ -83,6 +83,7 @@ fn english(key: &str) -> &'static str {
         "start_session" => "Start with the session",
         "edge_width" => "Edge width",
         "shelf_opacity" => "Shelf opacity (%)",
+        "move_shelf" => "Drag to move the shelf",
         "shelf_opacity_hint" => {
             "How opaque the shelf background is. Lower values let the window underneath show through."
         }
@@ -151,6 +152,7 @@ fn japanese(key: &str) -> &'static str {
         "start_session" => "ログイン時に起動",
         "edge_width" => "画面端の幅",
         "shelf_opacity" => "シェルフの不透明度 (%)",
+        "move_shelf" => "ドラッグしてシェルフを移動",
         "shelf_opacity_hint" => {
             "シェルフ背景の不透明度です。小さくすると下のウィンドウが透けます。"
         }
@@ -220,6 +222,7 @@ mod tests {
         "start_session",
         "edge_width",
         "shelf_opacity",
+        "move_shelf",
         "shelf_opacity_hint",
         "screen_edge",
         "left",

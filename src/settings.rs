@@ -268,6 +268,12 @@ pub struct Settings {
     pub language: Language,
     pub reduced_motion: bool,
     pub edge: ScreenEdge,
+    /// Where the user dragged the shelf to, in device pixels.
+    ///
+    /// `None` means "anchored to `edge`", which is also what changing the edge
+    /// restores. Yoink's shelf reappears where you last put it, and a position
+    /// is only meaningful on backends that let Yeet place its own windows.
+    pub shelf_position: Option<[i32; 2]>,
     pub disabled_outputs: Vec<String>,
     pub global_hotkey: String,
 }
@@ -286,6 +292,7 @@ impl Default for Settings {
             language: Language::System,
             reduced_motion: false,
             edge: ScreenEdge::Right,
+            shelf_position: None,
             disabled_outputs: Vec::new(),
             global_hotkey: DEFAULT_GLOBAL_HOTKEY.to_owned(),
         }

@@ -50,6 +50,12 @@ pub struct Ui {
     global_hotkey: RefCell<Option<platform::GlobalHotkey>>,
     desktop_services: RefCell<Option<DesktopServices>>,
     drag_active: Cell<bool>,
+    /// Set once the user grabs the move handle.
+    ///
+    /// Until then the shelf is anchored to the configured edge, and sampling
+    /// its position would silently turn that anchor into a fixed position the
+    /// user never chose.
+    shelf_moved: Cell<bool>,
 }
 
 impl Ui {
@@ -59,6 +65,10 @@ impl Ui {
         set_language(settings.language);
         apply_theme(settings.theme);
         apply_shelf_opacity(settings.shelf_opacity);
+        let settings_shelf_position = settings
+            .shelf_position
+            .filter(|_| platform::supports_manual_placement());
+        platform::set_manual_shelf_position(settings_shelf_position.map(|[x, y]| (x, y)));
         // Yeet owns always-available edge drop targets even while its shelf is
         // hidden, so the primary instance must not exit with no mapped shelf.
         let hold = app.hold();
@@ -93,6 +103,20 @@ impl Ui {
                 "Drag this header to move the complete stack as one group.",
             ),
         ]);
+        // A dedicated grip, because the header itself is the drag source for
+        // the whole stack: without a separate target there would be no way to
+        // tell "move the shelf" from "drag every item out of it".
+        let grip = gtk::Image::from_icon_name("list-drag-handle-symbolic");
+        grip.set_pixel_size(16);
+        grip.add_css_class("dim-label");
+        let move_handle = gtk::WindowHandle::builder()
+            .child(&grip)
+            .tooltip_text(tr("move_shelf"))
+            .visible(platform::supports_manual_placement())
+            .build();
+        move_handle.set_accessible_role(gtk::AccessibleRole::Button);
+        move_handle.update_property(&[gtk::accessible::Property::Label(tr("move_shelf"))]);
+
         let stack_icon = gtk::Image::from_icon_name("view-grid-symbolic");
         stack_icon.set_pixel_size(20);
         let title = gtk::Label::new(Some("YEET"));
@@ -106,6 +130,7 @@ impl Ui {
         let hide = gtk::Button::from_icon_name("window-minimize-symbolic");
         hide.add_css_class("flat");
         set_button_accessibility(&hide, tr("hide_shelf"), "Escape");
+        header.append(&move_handle);
         header.append(&stack_icon);
         header.append(&title);
         header.append(&hide);
@@ -217,6 +242,7 @@ impl Ui {
             global_hotkey: RefCell::new(None),
             desktop_services: RefCell::new(None),
             drag_active: Cell::new(false),
+            shelf_moved: Cell::new(settings_shelf_position.is_some()),
         });
 
         {
@@ -261,6 +287,28 @@ impl Ui {
             });
         }
         add_drag_source(&header, &ui, None);
+        // Capture phase, because `GtkWindowHandle` claims the press to start
+        // the window move and a bubbling gesture would never see it.
+        {
+            let press = gtk::GestureClick::new();
+            press.set_propagation_phase(gtk::PropagationPhase::Capture);
+            let ui = ui.clone();
+            press.connect_pressed(move |_, _, _, _| ui.shelf_moved.set(true));
+            move_handle.add_controller(press);
+        }
+        // The window manager reports neither the start nor the end of an
+        // interactive move, and GTK exposes no window position at all, so the
+        // only way to learn where the user put the shelf is to look.
+        if platform::supports_manual_placement() {
+            let weak = Rc::downgrade(&ui);
+            glib::timeout_add_local(Duration::from_millis(600), move || {
+                let Some(ui) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                ui.remember_shelf_position();
+                glib::ControlFlow::Continue
+            });
+        }
         install_keyboard(&ui);
 
         attach_drop_target(&ui.shelf, &ui, false, None);
@@ -650,6 +698,34 @@ impl Ui {
         } else {
             self.focus_row(0, false);
         }
+    }
+
+    /// Persist where the user dragged the shelf to.
+    ///
+    /// Only writes on an actual change, so the sampler does not touch the
+    /// settings file while the shelf simply sits where it was put.
+    fn remember_shelf_position(self: &Rc<Self>) {
+        if !self.shelf_moved.get() || !self.shelf_shown.get() {
+            return;
+        }
+        let Some((x, y)) = platform::current_shelf_position(&self.shelf) else {
+            return;
+        };
+        if self.settings.borrow().shelf_position == Some([x, y]) {
+            return;
+        }
+        self.settings.borrow_mut().shelf_position = Some([x, y]);
+        platform::set_manual_shelf_position(Some((x, y)));
+        self.save_settings();
+    }
+
+    /// Return the shelf to the configured screen edge.
+    fn reset_shelf_position(self: &Rc<Self>) {
+        self.shelf_moved.set(false);
+        self.settings.borrow_mut().shelf_position = None;
+        platform::set_manual_shelf_position(None);
+        self.save_settings();
+        platform::update_shelf_placement(&self.shelf, self.settings.borrow().edge);
     }
 
     fn hide(&self) {
@@ -1256,6 +1332,9 @@ impl Ui {
                 } else {
                     ScreenEdge::Right
                 };
+                // Choosing an edge is a request to be anchored there, which a
+                // remembered position would otherwise silently override.
+                ui.reset_shelf_position();
                 ui.revealer.set_transition_type(
                     if ui.settings.borrow().edge == ScreenEdge::Right {
                         gtk::RevealerTransitionType::SlideLeft
