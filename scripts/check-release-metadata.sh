@@ -81,7 +81,9 @@ if [[ "$mode" == "--tagged" ]]; then
 
   archive="$(mktemp)"
   trap 'rm -f "$archive"' EXIT
-  curl -fsSL \
+  # GitHub rate-limits archive downloads, and a transient 429 here is not a
+  # metadata problem. Retry rather than fail the release check on it.
+  curl -fsSL --retry 6 --retry-delay 15 --retry-all-errors \
     "https://github.com/hjosugi/yeet/archive/refs/tags/$tag.tar.gz" \
     -o "$archive"
   archive_hash="$(sha256sum "$archive" | cut -d' ' -f1)"
@@ -89,7 +91,7 @@ if [[ "$mode" == "--tagged" ]]; then
     fail "Arch archive hash does not match the published $tag source archive"
 
   windows_sums="$(
-    curl -fsSL \
+    curl -fsSL --retry 6 --retry-delay 15 --retry-all-errors \
       "https://github.com/hjosugi/yeet/releases/download/$tag/SHA256SUMS-windows.txt"
   )"
   portable_hash="$(
