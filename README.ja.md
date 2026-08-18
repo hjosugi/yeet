@@ -10,7 +10,8 @@ Wayland と Windows 向けの、Yoink ライクな軽量ドラッグ＆ドロッ
 
 ![2つのファイルを保持したYeetシェルフ](docs/screenshots/yeet-linux-dark.png)
 
-現在のreleaseは **v0.6.0** で、mainには次に出す変更が入っています。application、
+mainは **v0.6.1** を対象にしています。Windowsの起動でconsole windowが点滅する問題と、
+tray常駐中のpollingを直すfix releaseです。application、
 Cargo packageとも名前は単にYeetで、native Rust/GTK 4の単一codebaseです。v0.6では
 shelfを好きな位置へdragできるようにし、platform backendを仕組みごとに分割して
 GNOMEでも companion shell extension か XWayland のどちらかで最前面を維持できる
@@ -133,9 +134,9 @@ AppImageはGTK 4のruntimeを同梱しているため、他に何もインスト
 どのディストリビューションでも動きます。
 
 ```sh
-curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.6.0-linux-x86_64.AppImage
-chmod +x yeet-0.6.0-linux-x86_64.AppImage
-./yeet-0.6.0-linux-x86_64.AppImage --hidden
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.6.1-linux-x86_64.AppImage
+chmod +x yeet-0.6.1-linux-x86_64.AppImage
+./yeet-0.6.1-linux-x86_64.AppImage --hidden
 ```
 
 ### yeetup（インストール・更新・削除）
@@ -144,9 +145,9 @@ chmod +x yeet-0.6.0-linux-x86_64.AppImage
 インストールして、書き込んだファイルを記録します。
 
 ```sh
-curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.6.0-linux-x86_64
-chmod +x yeetup-0.6.0-linux-x86_64
-./yeetup-0.6.0-linux-x86_64 install      # sudo不要、~/.local へ
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.6.1-linux-x86_64
+chmod +x yeetup-0.6.1-linux-x86_64
+./yeetup-0.6.1-linux-x86_64 install      # sudo不要、~/.local へ
 ```
 
 以降は`yeetup update`で最新リリースへ更新、`yeetup status`で状態確認、
@@ -161,7 +162,7 @@ global shortcutは動作しません。
 現在のリリースアーカイブをダウンロードし、`/usr/local` へインストールします。
 
 ```sh
-version=0.6.0
+version=0.6.1
 base="https://github.com/hjosugi/yeet/releases/download/v${version}"
 curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
 curl -fLO "$base/SHA256SUMS-linux.txt"

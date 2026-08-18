@@ -32,6 +32,20 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.6.1" date="2026-08-18">
+      <description>
+        <p>Stops a Windows launch from flashing roughly ten console windows.
+        Reading the light/dark setting ran reg.exe once per window Yeet
+        created; the theme and the autostart entry now use the registry
+        directly and start no process at all.</p>
+        <p>Records start-up failures in a log file, because a GUI-subsystem
+        application has no console to print them to, and shows the first one in
+        a dialog when nothing else can.</p>
+        <p>Removes the polling that ran while Yeet sat in the tray, so an idle
+        shelf performs no timer wakeups, and stops rebuilding the screen-edge
+        strips when nothing about them has changed.</p>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-08-17">
       <description>
         <p>Keeps the shelf above other windows on GNOME, which previously buried
