@@ -11,14 +11,14 @@ leaves the shelf, it disappears.
 
 ![Yeet shelf holding two files](docs/screenshots/yeet-linux-dark.png)
 
-> Development status: **main is targeting v0.6.0**. The application and Cargo
-> package are now named simply Yeet and use one native Rust/GTK 4 codebase. The
-> v0.5 line adds stable item identities plus configurable deduplication and
-> multi-drop selection, with explicit copy/move/cancel drag completion policy,
-> on top of the complete v0.4 feature set. Real compositor and interactive
-> Windows verification remains tracked separately in the
-> [test matrix](docs/compositors.md); an implemented path is not presented as a
-> verified platform result.
+> Development status: **v0.6.0 is the current release**; main carries the
+> changes that ship next. The application and Cargo package are named simply
+> Yeet and use one native Rust/GTK 4 codebase. v0.6 added a shelf you can drag
+> anywhere, one backend per mechanism so GNOME is served by a companion shell
+> extension or XWayland rather than by nothing, and `yeetup`, a cross-platform
+> installer. Real compositor and interactive Windows verification remains
+> tracked separately in the [test matrix](docs/compositors.md); an implemented
+> path is not presented as a verified platform result.
 
 ## Quick start
 
@@ -79,6 +79,26 @@ environments.
 3. **Release** — drag items (individually, multi-selected, or as a whole
    stack) out of the shelf into any app.
 4. **Vanish** — when the last item leaves the shelf, it hides itself.
+
+## Running in the background
+
+With an empty shelf, Yeet is a notification-area icon and a few-pixel strip at
+the screen edge — no window, and no recurring work. Nothing is polled: the
+tray, the global shortcut and the drop targets each wake the process through
+the event they are waiting for, so an idle Yeet performs no timer wakeups at
+all and reads no clocks.
+
+Drags are detected by the strip itself, which is an ordinary drop target
+declared for files, URI lists, text and images. A drag that carries none of
+those is not offered to it, and a pointer crossing the strip without a drag in
+progress does nothing at all. There is no pointer hook, no polling of the
+cursor, and no reading of other applications' drag state.
+
+The one repeating timer left samples the shelf's position every 0.6 seconds,
+and only while the shelf is both on screen and somewhere the user dragged it
+to: neither the window manager nor GTK reports the end of an interactive move,
+so the position can only be learned by looking. Hiding the shelf takes one
+last sample and stops the timer.
 
 ## Platform integration
 
@@ -190,7 +210,9 @@ chmod +x yeetup-0.6.0-linux-x86_64
 Later, `yeetup update` moves to the newest release, `yeetup status` reports what
 is installed, and `yeetup uninstall` removes exactly the files it added. Use
 `--system` to install into `/usr/local` instead, or `--prefix DIR` for any other
-location. The same binary is published for Windows and macOS.
+location. The same binary is published for Windows and macOS, though the macOS
+build is a plain GTK application: it has no platform backend yet, so it has no
+always-on-top shelf, no tray icon and no global shortcut.
 
 ### Release archive
 
@@ -275,6 +297,42 @@ See [Wayland compositor verification](docs/compositors.md),
 platform-specific bug. Contributors updating README media should follow the
 [reproducible demo-capture contract](docs/demo-capture.md); missing captures are
 tracked there and must not be replaced with mockups.
+
+## Troubleshooting
+
+**Console windows flash open and shut when Yeet starts (Windows).** In v0.6.0
+and earlier, Yeet read the Windows light/dark setting by running `reg.exe`, and
+did so on every realize and map of the shelf and of every edge strip. From the
+GUI subsystem each of those spawns gets its own console window, so a launch
+flashed roughly ten of them and paid for a process spawn each time. The theme
+read and the autostart entry now use the registry API directly: nothing is
+spawned, and no console appears. PDF previews, which do still run `pdftoppm`,
+create it with `CREATE_NO_WINDOW`.
+
+**A launch that leaves nothing on screen.** Start-up failures are appended to a
+log file, because a GUI-subsystem process has no console to print them to:
+
+<!-- markdownlint-disable MD013 -->
+
+| Platform | Log |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\hjosugi\Yeet\data\yeet.log` |
+| Linux | `$XDG_DATA_HOME/yeet/yeet.log`, usually `~/.local/share/yeet/yeet.log` |
+| macOS | `~/Library/Application Support/io.hjosugi.Yeet/yeet.log` |
+
+<!-- markdownlint-enable MD013 -->
+
+`yeet --help` prints the path for the machine it runs on. Rust panics and GTK's
+own warnings both land there, so a session that cannot open a display records
+that instead of losing it with the console. A launch that leaves *nothing* in
+the log never reached Yeet's own code at all: on Windows that means the GTK
+runtime could not be loaded, so install with the setup EXE or Scoop rather than
+copying `yeet.exe` out of the portable ZIP on its own.
+
+**Diagnostics.** `YEET_BACKEND` forces the Linux shelf backend
+(`layer-shell`, `x11`, `extension` or `plain`) when the automatic choice is
+wrong, and `YEET_DEBUG` traces the desktop-portal exchange behind the global
+shortcut on stderr. Both are listed by `yeet --help`.
 
 ## Prior art & credits
 

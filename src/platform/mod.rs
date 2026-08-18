@@ -9,6 +9,8 @@
 
 #[cfg(target_os = "linux")]
 mod portal;
+#[cfg(target_os = "windows")]
+mod registry;
 // Named `win32`, not `windows`: a module called `windows` here would shadow the
 // `windows` crate for every path in this file, including the console attachment
 // below.
@@ -672,25 +674,20 @@ pub fn set_autostart(enabled: bool) -> std::io::Result<()> {
     )
 }
 
+/// Add or remove Yeet's per-user `Run` entry.
+///
+/// Written through the registry API rather than `reg.exe`, which would flash a
+/// console window over the settings dialog that triggered it.
 #[cfg(target_os = "windows")]
 pub fn set_autostart(enabled: bool) -> std::io::Result<()> {
-    use std::process::Command;
+    const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    const VALUE: &str = "Yeet";
 
-    let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-    let status = if enabled {
-        let value = format!("\"{}\" --hidden", std::env::current_exe()?.display());
-        Command::new("reg")
-            .args(["add", key, "/v", "Yeet", "/t", "REG_SZ", "/d", &value, "/f"])
-            .status()?
-    } else {
-        Command::new("reg")
-            .args(["delete", key, "/v", "Yeet", "/f"])
-            .status()?
-    };
-    status
-        .success()
-        .then_some(())
-        .ok_or_else(|| std::io::Error::other("failed to update Windows startup registration"))
+    if !enabled {
+        return registry::delete_current_user_value(RUN_KEY, VALUE);
+    }
+    let command = format!("\"{}\" --hidden", std::env::current_exe()?.display());
+    registry::set_current_user_string(RUN_KEY, VALUE, &command)
 }
 
 #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]

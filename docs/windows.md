@@ -7,6 +7,15 @@ quickly captures the clipboard. Per-user autostart uses the standard `HKCU` Run
 key and is controlled in Settings. Installer validation and code signing still
 require a real Windows release machine.
 
+Yeet spawns no helper process during a launch. The light/dark setting is read
+with `RegGetValueW` and the autostart entry is written with `RegSetValueExW`,
+rather than by running `reg.exe`: release builds are GUI-subsystem, so every
+console child gets a console window of its own, and the theme read happens on
+every realize and map of the shelf and of each edge strip. Running it as a
+process flashed roughly ten console windows across a single launch. The only
+process Yeet still starts is `pdftoppm` for a PDF preview, created with
+`CREATE_NO_WINDOW`.
+
 Both the shelf and edge strips set `WS_EX_TOPMOST` and are placed with
 `SetWindowPos(HWND_TOPMOST)`. The shelf reapplies those flags whenever it is
 mapped, so hiding and showing it from the CLI cannot demote it below ordinary
@@ -65,6 +74,8 @@ following tray, hotkey, focus, and installer checks remain real-machine work.
   does not take focus away from the source.
 - The shelf and every edge strip remain above ordinary windows. Hide/show,
   shortcut toggles, focus changes and display changes do not demote them.
+- No console window appears at any point during a launch, while toggling
+  autostart in Settings, or while previewing a PDF.
 - The notification-area tooltip tracks the shelf item count, left-click toggles
   the shelf, and every menu action performs the labeled operation.
 - Restarting Explorer recreates one working notification-area icon; quitting
@@ -90,6 +101,14 @@ standalone helper executables explicitly. The portable ZIP and installer ship
 `gspawn-win64-helper-console.exe`) next to `yeet.exe`. When assembling a bundle
 by hand, copy those three files from the GTK runtime's `bin` directory alongside
 `yeet.exe`, otherwise the application will not launch.
+
+That failure used to be invisible: the GIO message goes to a stderr the GUI
+subsystem does not connect to anything. Yeet now copies GTK and GLib warnings,
+and any Rust panic, into `%LOCALAPPDATA%\hjosugi\Yeet\data\yeet.log`, and
+shows the first failure of a run in a message box. Check that file first for
+any launch that appears to do nothing; `yeet --help` prints its path. A launch
+that leaves the file empty never reached Yeet's own code, which means the GTK
+DLLs themselves could not be loaded.
 
 ## Integrity-level limitation
 

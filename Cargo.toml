@@ -18,6 +18,9 @@ name = "yeet"
 path = "src/main.rs"
 
 [dependencies]
+# Wakes the GTK main loop when a background thread actually has something to
+# report, which is what lets the resident process sit at zero timers.
+async-channel = "2.5"
 directories = "6.0"
 gio = "0.22"
 glib = "0.22"
@@ -43,6 +46,7 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Gdi",
     "Win32_System_Console",
     "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_HiDpi",
     "Win32_UI_Shell",

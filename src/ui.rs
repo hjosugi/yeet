@@ -56,6 +56,26 @@ pub struct Ui {
     /// its position would silently turn that anchor into a fixed position the
     /// user never chose.
     shelf_moved: Cell<bool>,
+    /// The position sampler, alive only while it has something to sample.
+    position_sampler: Cell<Option<glib::SourceId>>,
+    /// The layout the live strips were built from; `None` before the first build.
+    edge_layout: RefCell<Option<EdgeLayout>>,
+}
+
+/// One monitor's contribution to the edge-strip layout.
+#[derive(Debug, Eq, PartialEq)]
+struct EdgeStrip {
+    connector: Option<String>,
+    geometry: (i32, i32, i32, i32),
+    scale: i32,
+}
+
+/// The complete set of inputs that decide what the edge strips look like.
+#[derive(Debug, Eq, PartialEq)]
+struct EdgeLayout {
+    edge: ScreenEdge,
+    strip_size: i32,
+    strips: Vec<EdgeStrip>,
 }
 
 impl Ui {
@@ -243,6 +263,8 @@ impl Ui {
             desktop_services: RefCell::new(None),
             drag_active: Cell::new(false),
             shelf_moved: Cell::new(settings_shelf_position.is_some()),
+            position_sampler: Cell::new(None),
+            edge_layout: RefCell::new(None),
         });
 
         {
@@ -293,21 +315,11 @@ impl Ui {
             let press = gtk::GestureClick::new();
             press.set_propagation_phase(gtk::PropagationPhase::Capture);
             let ui = ui.clone();
-            press.connect_pressed(move |_, _, _, _| ui.shelf_moved.set(true));
-            move_handle.add_controller(press);
-        }
-        // The window manager reports neither the start nor the end of an
-        // interactive move, and GTK exposes no window position at all, so the
-        // only way to learn where the user put the shelf is to look.
-        if platform::supports_manual_placement() {
-            let weak = Rc::downgrade(&ui);
-            glib::timeout_add_local(Duration::from_millis(600), move || {
-                let Some(ui) = weak.upgrade() else {
-                    return glib::ControlFlow::Break;
-                };
-                ui.remember_shelf_position();
-                glib::ControlFlow::Continue
+            press.connect_pressed(move |_, _, _, _| {
+                ui.shelf_moved.set(true);
+                ui.update_position_sampler();
             });
+            move_handle.add_controller(press);
         }
         install_keyboard(&ui);
 
@@ -419,35 +431,31 @@ impl Ui {
         }
     }
 
+    /// Recreate the edge strips, but only when they would actually differ.
+    ///
+    /// Rebuilding closes and recreates a window on every monitor, and the
+    /// callers ask for one far more often than the answer changes: a monitor
+    /// emits `geometry` and `scale-factor` notifications for changes that do
+    /// not move it, and the disabled-outputs entry fires on every keystroke.
+    /// Recreating regardless makes the strips blink, costs a full window
+    /// setup each time, and on a desktop that derives its work area from
+    /// these very windows it can feed straight back into itself. Comparing
+    /// the layout first makes all of that harmless.
     fn rebuild_edges(self: &Rc<Self>, app: &gtk::Application) {
-        for window in self.edges.borrow_mut().drain(..) {
+        let monitors = self.strip_monitors(app);
+        let layout = self.edge_layout(&monitors);
+        if self.edge_layout.borrow().as_ref() == Some(&layout) {
+            return;
+        }
+        // Taken out of the cell before closing anything: closing a window runs
+        // GTK signal handlers, and a rebuild reaching this list again while it
+        // is still borrowed would panic.
+        let live: Vec<gtk::Window> = self.edges.borrow_mut().drain(..).collect();
+        for window in live {
             window.close();
         }
-        if !platform::uses_edge_strips() {
-            return;
-        }
-        let Some(display) = gdk::Display::default() else {
-            return;
-        };
-        let monitors = display.monitors();
         let mut edges = self.edges.borrow_mut();
-        for index in 0..monitors.n_items() {
-            let Some(monitor) = monitors
-                .item(index)
-                .and_then(|item| item.downcast::<gdk::Monitor>().ok())
-            else {
-                continue;
-            };
-            self.watch_monitor(&monitor, app);
-            if monitor.connector().is_some_and(|connector| {
-                self.settings
-                    .borrow()
-                    .disabled_outputs
-                    .iter()
-                    .any(|disabled| disabled == connector.as_str())
-            }) {
-                continue;
-            }
+        for monitor in monitors {
             let edge = gtk::Window::builder()
                 .application(app)
                 .title("Yeet edge")
@@ -461,6 +469,67 @@ impl Ui {
             attach_drop_target(&edge, self, true, Some(monitor));
             edge.set_visible(true);
             edges.push(edge);
+        }
+        *self.edge_layout.borrow_mut() = Some(layout);
+    }
+
+    /// The monitors that should carry a strip, watched for changes on the way.
+    ///
+    /// Every monitor is watched, including the ones the user turned off: a
+    /// disabled output still has to be noticed when it is enabled again.
+    fn strip_monitors(self: &Rc<Self>, app: &gtk::Application) -> Vec<gdk::Monitor> {
+        if !platform::uses_edge_strips() {
+            return Vec::new();
+        }
+        let Some(display) = gdk::Display::default() else {
+            return Vec::new();
+        };
+        let monitors = display.monitors();
+        let mut wanted = Vec::new();
+        for index in 0..monitors.n_items() {
+            let Some(monitor) = monitors
+                .item(index)
+                .and_then(|item| item.downcast::<gdk::Monitor>().ok())
+            else {
+                continue;
+            };
+            self.watch_monitor(&monitor, app);
+            let disabled = monitor.connector().is_some_and(|connector| {
+                self.settings
+                    .borrow()
+                    .disabled_outputs
+                    .iter()
+                    .any(|disabled| disabled == connector.as_str())
+            });
+            if !disabled {
+                wanted.push(monitor);
+            }
+        }
+        wanted
+    }
+
+    /// Everything the strips are built from, and nothing else.
+    fn edge_layout(&self, monitors: &[gdk::Monitor]) -> EdgeLayout {
+        let settings = self.settings.borrow();
+        EdgeLayout {
+            edge: settings.edge,
+            strip_size: settings.strip_size,
+            strips: monitors
+                .iter()
+                .map(|monitor| {
+                    let geometry = monitor.geometry();
+                    EdgeStrip {
+                        connector: monitor.connector().map(|connector| connector.to_string()),
+                        geometry: (
+                            geometry.x(),
+                            geometry.y(),
+                            geometry.width(),
+                            geometry.height(),
+                        ),
+                        scale: monitor.scale_factor(),
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -681,7 +750,7 @@ impl Ui {
         }
     }
 
-    fn show(&self, monitor: Option<&gdk::Monitor>) {
+    fn show(self: &Rc<Self>, monitor: Option<&gdk::Monitor>) {
         if let Some(monitor) = monitor {
             platform::set_shelf_monitor(&self.shelf, monitor, self.settings.borrow().edge);
         }
@@ -693,6 +762,7 @@ impl Ui {
         }
         self.shelf.set_visible(true);
         self.revealer.set_reveal_child(true);
+        self.update_position_sampler();
         if let Some(index) = self.first_selected_index() {
             self.focus_row_without_selection(index);
         } else {
@@ -700,12 +770,47 @@ impl Ui {
         }
     }
 
+    /// Run the shelf-position sampler only while it has something to sample.
+    ///
+    /// The window manager reports neither the start nor the end of an
+    /// interactive move, and GTK exposes no window position at all, so the
+    /// only way to learn where the user put the shelf is to look. Looking is
+    /// worth a timer while the user can see and drag the shelf, and worth
+    /// nothing at all the rest of the time — which, for a shelf that spends
+    /// its life hidden in the tray, is nearly always.
+    fn update_position_sampler(self: &Rc<Self>) {
+        let wanted = platform::supports_manual_placement()
+            && self.shelf_moved.get()
+            && self.shelf_shown.get();
+        let running = self.position_sampler.take();
+        if wanted == running.is_some() {
+            self.position_sampler.set(running);
+            return;
+        }
+        let Some(running) = running else {
+            let weak = Rc::downgrade(self);
+            let id = glib::timeout_add_local(Duration::from_millis(600), move || {
+                let Some(ui) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                ui.remember_shelf_position();
+                glib::ControlFlow::Continue
+            });
+            self.position_sampler.set(Some(id));
+            return;
+        };
+        // One last look, so a position the user set just before hiding the
+        // shelf is kept rather than lost with the timer.
+        self.remember_shelf_position();
+        running.remove();
+    }
+
     /// Persist where the user dragged the shelf to.
     ///
     /// Only writes on an actual change, so the sampler does not touch the
     /// settings file while the shelf simply sits where it was put.
     fn remember_shelf_position(self: &Rc<Self>) {
-        if !self.shelf_moved.get() || !self.shelf_shown.get() {
+        if !self.shelf_moved.get() {
             return;
         }
         let Some((x, y)) = platform::current_shelf_position(&self.shelf) else {
@@ -724,12 +829,14 @@ impl Ui {
         self.shelf_moved.set(false);
         self.settings.borrow_mut().shelf_position = None;
         platform::set_manual_shelf_position(None);
+        self.update_position_sampler();
         self.save_settings();
         platform::update_shelf_placement(&self.shelf, self.settings.borrow().edge);
     }
 
-    fn hide(&self) {
+    fn hide(self: &Rc<Self>) {
         self.shelf_shown.set(false);
+        self.update_position_sampler();
         if self.settings.borrow().reduced_motion {
             finish_shelf_hide(&self.shelf);
             return;
@@ -744,7 +851,7 @@ impl Ui {
         });
     }
 
-    fn toggle(&self) {
+    fn toggle(self: &Rc<Self>) {
         if self.shelf_shown.get() {
             self.hide();
         } else {
@@ -752,7 +859,7 @@ impl Ui {
         }
     }
 
-    fn hide_if_empty(&self) {
+    fn hide_if_empty(self: &Rc<Self>) {
         if self.settings.borrow().auto_hide
             && self.model.borrow().items().is_empty()
             && !self.drag_active.get()
@@ -2289,7 +2396,8 @@ fn legacy_snippet_mime_type(item: &ShelfItem) -> Option<String> {
 
 fn render_pdf_first_page(path: &Path) -> std::io::Result<PathBuf> {
     render_pdf_first_page_with(path, |path, base| {
-        std::process::Command::new("pdftoppm")
+        let mut renderer = std::process::Command::new("pdftoppm");
+        renderer
             .args([
                 "-f",
                 "1",
@@ -2301,11 +2409,28 @@ fn render_pdf_first_page(path: &Path) -> std::io::Result<PathBuf> {
                 "-png",
             ])
             .arg(path)
-            .arg(base)
-            .status()
-            .map(|status| status.success())
+            .arg(base);
+        hide_console_window(&mut renderer);
+        renderer.status().map(|status| status.success())
     })
 }
+
+/// Keep a console-subsystem helper from flashing a window over the shelf.
+///
+/// Release builds of Yeet are GUI-subsystem, so Windows hands any console
+/// child it launches a brand new console — a black rectangle that appears and
+/// disappears on screen. `CREATE_NO_WINDOW` suppresses it.
+#[cfg(target_os = "windows")]
+fn hide_console_window(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hide_console_window(_command: &mut std::process::Command) {}
 
 fn render_pdf_first_page_with(
     path: &Path,
@@ -2415,6 +2540,52 @@ fn install_css() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn edge_layout() -> EdgeLayout {
+        EdgeLayout {
+            edge: ScreenEdge::Right,
+            strip_size: 6,
+            strips: vec![EdgeStrip {
+                connector: Some("DP-1".to_owned()),
+                geometry: (0, 0, 2560, 1440),
+                scale: 2,
+            }],
+        }
+    }
+
+    /// Every input the strips are built from has to be part of the comparison
+    /// that decides whether to rebuild them, or a real change is skipped and
+    /// the strips are left in the wrong place.
+    #[test]
+    fn every_edge_strip_input_forces_a_rebuild() {
+        let live = edge_layout();
+
+        let mut changed = edge_layout();
+        changed.edge = ScreenEdge::Left;
+        assert_ne!(live, changed, "the screen edge moves every strip");
+
+        let mut changed = edge_layout();
+        changed.strip_size = 12;
+        assert_ne!(live, changed, "the strip size resizes every strip");
+
+        let mut changed = edge_layout();
+        changed.strips.clear();
+        assert_ne!(live, changed, "disabling an output removes its strip");
+
+        let mut changed = edge_layout();
+        changed.strips[0].connector = Some("HDMI-1".to_owned());
+        assert_ne!(live, changed, "a strip belongs to one named output");
+
+        let mut changed = edge_layout();
+        changed.strips[0].geometry = (0, 0, 1920, 1080);
+        assert_ne!(live, changed, "a resized monitor needs a resized strip");
+
+        let mut changed = edge_layout();
+        changed.strips[0].scale = 1;
+        assert_ne!(live, changed, "the scale factor sets the strip width");
+
+        assert_eq!(live, edge_layout(), "an unchanged layout must not rebuild");
+    }
 
     #[test]
     fn keyboard_shortcuts_cover_all_shelf_operations() {

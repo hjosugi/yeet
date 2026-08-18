@@ -3,6 +3,7 @@
 // `attach_parent_console` restores terminal output; debug builds keep a console.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod diagnostics;
 mod platform;
 mod services;
 mod ui;
@@ -17,9 +18,13 @@ use ui::Ui;
 const APP_ID: &str = "io.github.hjosugi.Yeet";
 const HELP: &str = "Usage: yeet [OPTIONS] [FILE...]\n\n\
 Native drag-and-drop shelf for Wayland and Windows.\n\n\
-Options:\n  --toggle   Show or hide the shelf\n  --clear    Remove every item\n  --hidden   Start without showing the shelf\n  --help     Show this help\n  --version  Show the version\n";
+Options:\n  --toggle   Show or hide the shelf\n  --clear    Remove every item\n  --hidden   Start without showing the shelf\n  --help     Show this help\n  --version  Show the version\n\n\
+Environment:\n  YEET_BACKEND  Force the shelf backend: layer-shell, x11, extension, plain\n  YEET_DEBUG    Trace desktop-portal integration on stderr\n";
 
 fn main() -> glib::ExitCode {
+    // Before anything else, so a failure on the way to the first window has
+    // somewhere to be recorded.
+    let log = diagnostics::install();
     platform::attach_parent_console();
     // Must precede every GTK call: the shelf backend decides which GDK backend
     // the process talks to, and `GDK_BACKEND` is only read when the display is
@@ -28,6 +33,11 @@ fn main() -> glib::ExitCode {
     let local_arguments: Vec<_> = std::env::args_os().collect();
     if local_arguments.iter().any(|argument| argument == "--help") {
         print!("{HELP}");
+        // Named here because a start-up failure is exactly the case where the
+        // message on stderr never reaches anyone.
+        if let Some(log) = log.as_ref() {
+            println!("Start-up failures are recorded in\n  {}", log.display());
+        }
         return glib::ExitCode::SUCCESS;
     }
     if local_arguments
@@ -85,5 +95,9 @@ fn main() -> glib::ExitCode {
         });
     }
 
-    app.run()
+    let code = app.run();
+    if code != glib::ExitCode::SUCCESS {
+        diagnostics::record_startup_failure(log.as_deref(), code.get());
+    }
+    code
 }
