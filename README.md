@@ -11,9 +11,10 @@ leaves the shelf, it disappears.
 
 ![Yeet shelf holding two files](docs/screenshots/yeet-linux-dark.png)
 
-> Development status: **v0.6.0 is the current release**; main carries the
-> changes that ship next. The application and Cargo package are named simply
-> Yeet and use one native Rust/GTK 4 codebase. v0.6 added a shelf you can drag
+> Development status: **main is targeting v0.6.1**, a fix release for a Windows
+> launch that flashed console windows and for the polling Yeet did while it sat
+> in the tray. The application and Cargo package are named simply Yeet and use
+> one native Rust/GTK 4 codebase. v0.6 added a shelf you can drag
 > anywhere, one backend per mechanism so GNOME is served by a companion shell
 > extension or XWayland rather than by nothing, and `yeetup`, a cross-platform
 > installer. Real compositor and interactive Windows verification remains
@@ -191,9 +192,9 @@ The AppImage carries its own GTK 4 runtime, so it runs on any distribution
 without installing anything else:
 
 ```sh
-curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.6.0-linux-x86_64.AppImage
-chmod +x yeet-0.6.0-linux-x86_64.AppImage
-./yeet-0.6.0-linux-x86_64.AppImage --hidden
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.6.1-linux-x86_64.AppImage
+chmod +x yeet-0.6.1-linux-x86_64.AppImage
+./yeet-0.6.1-linux-x86_64.AppImage --hidden
 ```
 
 ### yeetup (installs, updates and removes)
@@ -202,9 +203,9 @@ chmod +x yeet-0.6.0-linux-x86_64.AppImage
 published checksums, installs it and records what it wrote:
 
 ```sh
-curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.6.0-linux-x86_64
-chmod +x yeetup-0.6.0-linux-x86_64
-./yeetup-0.6.0-linux-x86_64 install      # into ~/.local, no sudo
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.6.1-linux-x86_64
+chmod +x yeetup-0.6.1-linux-x86_64
+./yeetup-0.6.1-linux-x86_64 install      # into ~/.local, no sudo
 ```
 
 Later, `yeetup update` moves to the newest release, `yeetup status` reports what
@@ -219,7 +220,7 @@ always-on-top shelf, no tray icon and no global shortcut.
 Download the current release archive and install it under `/usr/local`:
 
 ```sh
-version=0.6.0
+version=0.6.1
 base="https://github.com/hjosugi/yeet/releases/download/v${version}"
 curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
 curl -fLO "$base/SHA256SUMS-linux.txt"
