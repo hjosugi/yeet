@@ -101,11 +101,10 @@ pub fn record_startup_failure(log: Option<&Path>, code: u8) {
     );
     if let Some(log) = log {
         record(log, &detail);
-        alert(&format!(
-            "Yeet could not start.\n\n{detail}\n\nDetails were written to\n{}",
-            log.display()
-        ));
     }
+    // Recorded, never shown. This is the path a scripted `yeet --toggle` takes
+    // when the running instance reports a failure, and a modal dialog would
+    // hold the caller open instead of letting it see the exit code.
     eprintln!("yeet: {detail}");
 }
 
@@ -159,11 +158,22 @@ fn session_summary() -> String {
 }
 
 /// Put the first failure of a run in front of the user.
+///
+/// Only when there is nowhere else for it to appear. A Yeet started from a
+/// terminal has already printed the same text there, and a modal dialog in
+/// front of a script or a test run is worse than useless — it holds the
+/// process open. The launch this exists for is the one from Explorer, a
+/// shortcut or the tray, which has no console at all.
 #[cfg(target_os = "windows")]
 fn alert(message: &str) {
+    use windows::Win32::System::Console::GetConsoleWindow;
     use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
     use windows::core::PCWSTR;
 
+    // SAFETY: no arguments, and the returned handle is only tested for null.
+    if !unsafe { GetConsoleWindow() }.is_invalid() {
+        return;
+    }
     if ALERTED.swap(true, Ordering::Relaxed) {
         return;
     }
