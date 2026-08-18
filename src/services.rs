@@ -1,5 +1,4 @@
-use std::sync::mpsc;
-use std::time::Duration;
+use async_channel::Sender;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DesktopAction {
@@ -15,14 +14,19 @@ pub struct DesktopServices {
 }
 
 impl DesktopServices {
+    /// Deliver tray activations to the GTK main thread.
+    ///
+    /// The actions are awaited rather than polled. A tray is idle for almost
+    /// the whole life of the process, and a timer that asks "was the menu
+    /// clicked?" twenty times a second is exactly the kind of background cost
+    /// an application that sits in the notification area must not have.
     pub fn install(callback: impl Fn(DesktopAction) + 'static) -> Self {
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = async_channel::unbounded();
         let backend = backend::install(sender);
-        glib::timeout_add_local(Duration::from_millis(50), move || {
-            while let Ok(action) = receiver.try_recv() {
+        glib::spawn_future_local(async move {
+            while let Ok(action) = receiver.recv().await {
                 callback(action);
             }
-            glib::ControlFlow::Continue
         });
         Self { backend }
     }
@@ -34,12 +38,11 @@ impl DesktopServices {
 
 #[cfg(target_os = "linux")]
 mod backend {
-    use super::DesktopAction;
+    use super::{DesktopAction, Sender};
     use ksni::TrayMethods;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
-        mpsc::Sender,
     };
     use yeet::i18n::tr;
 
@@ -83,7 +86,7 @@ mod backend {
         }
 
         fn activate(&mut self, _x: i32, _y: i32) {
-            let _ = self.sender.send(DesktopAction::Toggle);
+            let _ = self.sender.try_send(DesktopAction::Toggle);
         }
 
         fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
@@ -98,7 +101,7 @@ mod backend {
                     label: label.to_owned(),
                     icon_name: icon_name.to_owned(),
                     activate: Box::new(move |tray: &mut YeetTray| {
-                        let _ = tray.sender.send(action);
+                        let _ = tray.sender.try_send(action);
                     }),
                     ..Default::default()
                 }
@@ -222,12 +225,11 @@ mod backend {
 
 #[cfg(target_os = "windows")]
 mod backend {
-    use super::DesktopAction;
+    use super::{DesktopAction, Sender};
     use std::ffi::c_void;
     use std::sync::{
         Arc,
         atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
-        mpsc::Sender,
     };
     use std::thread::JoinHandle;
     use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -426,7 +428,7 @@ mod backend {
                 WM_TRAY => {
                     let notification = lparam.0 as u32 & 0xffff;
                     if matches!(notification, NIN_SELECT | NIN_KEYSELECT | WM_LBUTTONUP) {
-                        let _ = state.sender.send(DesktopAction::Toggle);
+                        let _ = state.sender.try_send(DesktopAction::Toggle);
                     } else if notification == WM_CONTEXTMENU {
                         unsafe { show_context_menu(window, &state.sender) };
                     }
@@ -556,7 +558,7 @@ mod backend {
                 _ => None,
             };
             if let Some(action) = action {
-                let _ = sender.send(action);
+                let _ = sender.try_send(action);
             }
             let _ = unsafe { PostMessageW(Some(window), WM_NULL, WPARAM(0), LPARAM(0)) };
         }
@@ -577,8 +579,7 @@ mod backend {
 
 #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
 mod backend {
-    use super::DesktopAction;
-    use std::sync::mpsc::Sender;
+    use super::{DesktopAction, Sender};
 
     pub struct Backend;
 

@@ -10,12 +10,12 @@ Wayland と Windows 向けの、Yoink ライクな軽量ドラッグ＆ドロッ
 
 ![2つのファイルを保持したYeetシェルフ](docs/screenshots/yeet-linux-dark.png)
 
-開発中の main は **v0.6.0 を対象**にしています。application、Cargo packageとも
-名前は単にYeetで、native Rust/GTK 4の単一codebaseです。v0.5系ではv0.4の全機能に
-加え、itemごとの安定したID、重複itemを許可する設定、複数dropをまとめて選択する
-設定、copy/move/cancelを明示的に扱うdrag完了policyを実装しています。ただし、
-実装済みであることと各compositor/Windows環境での確認済みは区別しています。
-実機確認状況は
+現在のreleaseは **v0.6.0** で、mainには次に出す変更が入っています。application、
+Cargo packageとも名前は単にYeetで、native Rust/GTK 4の単一codebaseです。v0.6では
+shelfを好きな位置へdragできるようにし、platform backendを仕組みごとに分割して
+GNOMEでも companion shell extension か XWayland のどちらかで最前面を維持できる
+ようにし、cross-platform installerの`yeetup`を追加しました。ただし、実装済みで
+あることと各compositor/Windows環境での確認済みは区別しています。実機確認状況は
 [compositor matrix](docs/compositors.md)を参照してください。
 
 ## Quick start
@@ -55,6 +55,23 @@ portable ZIPを取得します。起動後、既定のCtrl+Alt+Yまたは通知�
 
 この表は製品の方向性を比較したもので、性能benchmarkや全環境での動作保証では
 ありません。
+
+## 常駐時の動作
+
+shelfが空のあいだ、Yeetは通知領域のiconと画面端の数pixelのstripだけになり、window
+も定期処理も持ちません。pollingは一切していません。tray、global shortcut、drop
+targetはいずれも待っているevent自身で起こされるため、待機中のYeetはtimerによる
+wakeupを1回も発生させません。
+
+dragの検知はstrip自身が担います。stripはfile、URI list、text、imageを宣言した
+通常のdrop targetなので、それらを運んでいないdragはそもそも渡されず、drag中で
+ないpointerが横切っても何も起きません。pointer hookも、cursorのpolling も、他の
+applicationのdrag状態の読み取りも行いません。
+
+残っている繰り返しtimerはshelfの位置を0.6秒ごとに読むものだけで、shelfが表示中
+かつuserがdragで動かした場合にのみ動きます。interactive moveの終了はwindow
+managerもGTKも通知しないため、位置は見に行くしか知る方法がないからです。shelfを
+隠すときに最後の1回を読み、timerは止まります。
 
 ## 現在の主な機能
 
@@ -135,7 +152,9 @@ chmod +x yeetup-0.6.0-linux-x86_64
 以降は`yeetup update`で最新リリースへ更新、`yeetup status`で状態確認、
 `yeetup uninstall`で追加したファイルだけを正確に削除します。`--system`で
 `/usr/local`へ、`--prefix DIR`で任意の場所へインストールできます。
-同じバイナリをWindowsとmacOS向けにも公開しています。
+同じバイナリをWindowsとmacOS向けにも公開しています。ただしmacOS版は素のGTK
+applicationで、platform backendがまだありません。最前面固定のshelf、tray icon、
+global shortcutは動作しません。
 
 ### リリースアーカイブ
 
@@ -228,6 +247,41 @@ yeet --toggle  表示・非表示を切り替え
 yeet --clear   pin されていない item を削除
 yeet --hidden  非表示で起動
 ```
+
+## トラブルシューティング
+
+**起動時にconsole windowが何度も開いて閉じる（Windows）。** v0.6.0以前のYeetは
+Windowsのlight/dark設定を`reg.exe`の実行で読んでおり、しかもshelfと各edge strip
+のrealizeとmapのたびに実行していました。GUI subsystemのprocessから起動された
+console applicationにはそれぞれ新しいconsole windowが割り当てられるため、1回の
+起動で10個前後が点滅し、そのたびprocess生成のコストも払っていました。現在は
+theme読み取りもautostart登録もregistry APIを直接呼ぶため、processは生成されず
+consoleも出ません。`pdftoppm`を使うPDF previewだけは今もprocessを起動しますが、
+`CREATE_NO_WINDOW`を付けています。
+
+**起動しても画面に何も出ずに終わる。** GUI subsystemのprocessにはerrorを出力する
+consoleがないため、起動時の失敗はlog fileへ追記します。
+
+<!-- markdownlint-disable MD013 -->
+
+| Platform | Log |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\hjosugi\Yeet\data\yeet.log` |
+| Linux | `$XDG_DATA_HOME/yeet/yeet.log`（通常は `~/.local/share/yeet/yeet.log`） |
+| macOS | `~/Library/Application Support/io.hjosugi.Yeet/yeet.log` |
+
+<!-- markdownlint-enable MD013 -->
+
+実行中の環境でのpathは`yeet --help`が表示します。Rustのpanicも、GTK自身のwarning
+も同じlogに残るため、displayを開けなかったsessionもconsoleと一緒に消えるのでは
+なく記録されます。logに何も残らない場合はYeet自身のcodeへ到達していません。
+Windowsでは GTK runtime を読み込めなかったことを意味するので、portable ZIPから
+`yeet.exe`だけを取り出すのではなく、setup EXEかScoopでinstallしてください。
+
+**診断用の環境変数。** `YEET_BACKEND`はLinuxのshelf backend（`layer-shell`、
+`x11`、`extension`、`plain`）を自動選択より優先して指定します。`YEET_DEBUG`は
+global shortcutのdesktop portalとのやり取りをstderrへ出力します。どちらも
+`yeet --help`に載っています。
 
 詳細な確認項目は [Wayland compositor matrix](docs/compositors.md) と
 [Windows の制約](docs/windows.md) を参照してください。README用mediaを更新する場合は

@@ -7,8 +7,9 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
+
+use async_channel::Sender;
 
 use ashpd::desktop::global_shortcuts::{BindShortcutsOptions, GlobalShortcuts, NewShortcut};
 use futures_util::StreamExt;
@@ -68,22 +69,24 @@ pub fn install_global_hotkey(shortcut: &str, callback: impl Fn() + 'static) -> E
     // Portal work uses Tokio on a worker thread. Keep the non-Send GTK/UI
     // callback on the main thread and preserve one callback per activation
     // so the UI can continue to detect double presses for clipboard capture.
-    let (sender, receiver) = mpsc::channel();
+    //
+    // Awaited, not polled: a shortcut fires a handful of times a day, and the
+    // timer this replaces woke the main loop forty times a second to find an
+    // empty queue for the entire life of a resident process.
+    let (sender, receiver) = async_channel::unbounded();
     let error_slot = last_error.clone();
-    glib::timeout_add_local(Duration::from_millis(25), move || {
-        loop {
-            match receiver.try_recv() {
-                Ok(ShortcutEvent::Activated) => {
+    glib::spawn_future_local(async move {
+        while let Ok(event) = receiver.recv().await {
+            match event {
+                ShortcutEvent::Activated => {
                     // Proof the shortcut works, whatever the bind reported.
                     error_slot.borrow_mut().take();
                     callback();
                 }
-                Ok(ShortcutEvent::Failed(detail)) => {
+                ShortcutEvent::Failed(detail) => {
                     eprintln!("yeet: global shortcut unconfirmed: {detail}");
                     *error_slot.borrow_mut() = Some(GlobalHotkeyError::Unavailable(detail));
                 }
-                Err(TryRecvError::Empty) => return glib::ControlFlow::Continue,
-                Err(TryRecvError::Disconnected) => return glib::ControlFlow::Break,
             }
         }
     });
@@ -103,7 +106,7 @@ pub fn install_global_hotkey(shortcut: &str, callback: impl Fn() + 'static) -> E
             runtime.block_on(async move {
                 ensure_app_scope().await;
                 if let Err(error) = run_global_shortcut(&trigger, &sender).await {
-                    let _ = sender.send(ShortcutEvent::Failed(error.to_string()));
+                    let _ = sender.try_send(ShortcutEvent::Failed(error.to_string()));
                 }
             });
         });
@@ -182,10 +185,7 @@ fn in_app_scope() -> bool {
     })
 }
 
-async fn run_global_shortcut(
-    trigger: &str,
-    sender: &mpsc::Sender<ShortcutEvent>,
-) -> ashpd::Result<()> {
+async fn run_global_shortcut(trigger: &str, sender: &Sender<ShortcutEvent>) -> ashpd::Result<()> {
     let portal = GlobalShortcuts::new().await?;
     let session = portal.create_session(Default::default()).await?;
     // Subscribe before binding. A desktop that stored this shortcut on an
@@ -216,7 +216,7 @@ async fn run_global_shortcut(
     if !accepted {
         // Reported rather than fatal: an activation arriving later clears
         // this, which is what happens when a stored binding is still live.
-        let _ = sender.send(ShortcutEvent::Failed(format!(
+        let _ = sender.try_send(ShortcutEvent::Failed(format!(
             "the desktop did not confirm {trigger}; a shortcut stored on an \
              earlier run may still be live, so try pressing it. \
              `yeet --toggle` always works."
@@ -225,7 +225,7 @@ async fn run_global_shortcut(
 
     while let Some(event) = activated.next().await {
         if event.shortcut_id() == TOGGLE_SHORTCUT_ID
-            && sender.send(ShortcutEvent::Activated).is_err()
+            && sender.try_send(ShortcutEvent::Activated).is_err()
         {
             break;
         }

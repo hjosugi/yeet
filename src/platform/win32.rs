@@ -390,23 +390,18 @@ unsafe fn apply_native_theme(hwnd: HWND) {
     };
 }
 
+/// Whether the Windows app theme is currently dark.
+///
+/// Read directly from the registry. This runs on every realize and map of the
+/// shelf and of every edge strip, so the `reg.exe` query it replaces spawned a
+/// process — and flashed a console window — several times per launch.
 fn prefers_dark() -> bool {
+    const PERSONALIZE: &str = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
+
     match super::THEME_OVERRIDE.load(Ordering::Relaxed) {
         1 => false,
         2 => true,
-        _ => std::process::Command::new("reg")
-            .args([
-                "query",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-                "/v",
-                "AppsUseLightTheme",
-            ])
-            .output()
-            .is_ok_and(|output| {
-                String::from_utf8_lossy(&output.stdout)
-                    .split_whitespace()
-                    .last()
-                    .is_some_and(|value| value == "0x0")
-            }),
+        // Absent on a system whose theme was never changed, which is light.
+        _ => super::registry::current_user_dword(PERSONALIZE, "AppsUseLightTheme") == Some(0),
     }
 }
