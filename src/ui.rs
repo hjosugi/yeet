@@ -56,6 +56,9 @@ pub struct Ui {
     /// It is what tells a drag that ended in nothing from a shelf the user
     /// summoned deliberately, so only the former is taken away again.
     summoned_by_drag: Cell<bool>,
+    /// Counts the drags the watch has reported, so the put-back scheduled for
+    /// one drag can recognise that another has started since.
+    drag_generation: Cell<u64>,
     desktop_services: RefCell<Option<DesktopServices>>,
     drag_active: Cell<bool>,
     /// Set once the user grabs the move handle.
@@ -270,6 +273,7 @@ impl Ui {
             global_hotkey: RefCell::new(None),
             drag_watch: RefCell::new(None),
             summoned_by_drag: Cell::new(false),
+            drag_generation: Cell::new(0),
             desktop_services: RefCell::new(None),
             drag_active: Cell::new(false),
             shelf_moved: Cell::new(settings_shelf_position.is_some()),
@@ -431,10 +435,14 @@ impl Ui {
     ///
     /// A shelf that is already up is left exactly as it is: re-showing it
     /// would move the focus mid-drag, and a shelf the user summoned on purpose
-    /// must not be taken away when the drag ends.
+    /// must not be taken away when the drag ends. A shelf that is up because
+    /// of an earlier drag is instead adopted by this one, which is what keeps
+    /// two drags in quick succession from putting it away under the second.
     fn handle_global_drag(self: &Rc<Self>, phase: platform::DragPhase) {
         match phase {
             platform::DragPhase::Begin => {
+                self.drag_generation
+                    .set(self.drag_generation.get().wrapping_add(1));
                 if self.shelf_shown.get() || self.drag_active.get() {
                     return;
                 }
@@ -445,18 +453,26 @@ impl Ui {
                 if !self.summoned_by_drag.get() {
                     return;
                 }
-                self.summoned_by_drag.set(false);
                 // The drop that fills the shelf and the release of the mouse
                 // button are the same gesture, and they do not arrive in a
                 // fixed order: the pointer is watched on another thread while
                 // the drop crosses GTK's own event queue. Deciding a moment
                 // later costs nothing and stops a successful drop from being
                 // followed by the shelf disappearing.
+                //
+                // The generation is what makes the wait safe. A drag that
+                // starts inside it has already claimed the shelf, so this
+                // put-back — belonging to the drag before it — stands down.
+                let generation = self.drag_generation.get();
                 let weak = Rc::downgrade(self);
                 glib::timeout_add_local_once(Duration::from_millis(250), move || {
                     let Some(ui) = weak.upgrade() else {
                         return;
                     };
+                    if ui.drag_generation.get() != generation {
+                        return;
+                    }
+                    ui.summoned_by_drag.set(false);
                     ui.hide_after_drag();
                 });
             }
@@ -469,7 +485,10 @@ impl Ui {
     /// happens to a shelf the user asked for, while this one appeared on its
     /// own and has no reason to stay once the drag it appeared for is over.
     fn hide_after_drag(self: &Rc<Self>) {
-        if self.drag_active.get() || !self.model.borrow().items().is_empty() {
+        if !self.shelf_shown.get()
+            || self.drag_active.get()
+            || !self.model.borrow().items().is_empty()
+        {
             return;
         }
         self.hide();
