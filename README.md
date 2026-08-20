@@ -98,11 +98,15 @@ were.
 What the mode can be told depends on the session, and the settings switch says
 which one you have:
 
+<!-- markdownlint-disable MD013 -->
+
 | Session | Drags that summon the shelf |
 | --- | --- |
 | X11, or Wayland with XWayland running | Every X11 and XWayland drag source, via the XFIXES notification that XDND's own selection changed hands |
 | Windows | Any application that draws a drag image, which is what Explorer, browsers and Office all do |
 | Wayland with no XWayland | None: a Wayland client is not allowed to see drags outside its own surfaces, so the edge strip stays the trigger |
+
+<!-- markdownlint-enable MD013 -->
 
 Yeet learns only *that* a drag exists. Nothing about its contents is read
 unless it is dropped on the shelf.

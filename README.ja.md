@@ -68,11 +68,15 @@ Settingsでoffにしても、edge strip、global shortcut、CLIはそのまま�
 
 何を検出できるかはsessionによって変わり、Settingsのswitchがどちらであるかを示します。
 
+<!-- markdownlint-disable MD013 -->
+
 | session | shelfを呼び出せるdrag |
 | --- | --- |
 | X11、またはXWaylandが動作しているWayland | すべてのX11/XWayland drag source。XDNDが要求する`XdndSelection`の所有権移動をXFIXESで受け取ります |
 | Windows | drag imageを描画するapplication全般。Explorer、browser、Officeはいずれも該当します |
 | XWaylandのないWayland | なし。Wayland clientは自分のsurface外のdragを見られないため、edge stripがtriggerのままです |
+
+<!-- markdownlint-enable MD013 -->
 
 Yeetが知るのは「dragが存在すること」だけです。中身はshelfにdropされるまで読みません。
 
