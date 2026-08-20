@@ -18,14 +18,16 @@ use windows::Win32::Graphics::Dwm::{
     DWM_WINDOW_CORNER_PREFERENCE, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWMWCP_ROUND, DwmSetWindowAttribute,
 };
+use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     HOT_KEY_MODIFIERS, MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey,
 };
 use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GetWindowLongPtrW, HWND_TOPMOST, STYLESTRUCT, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SetWindowLongPtrW, SetWindowPos, WM_HOTKEY, WM_NCDESTROY, WM_STYLECHANGING, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    CHILDID_SELF, EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, GWL_EXSTYLE, GetClassNameW,
+    GetWindowLongPtrW, HWND_TOPMOST, OBJID_WINDOW, STYLESTRUCT, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+    SetWindowLongPtrW, SetWindowPos, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_HOTKEY,
+    WM_NCDESTROY, WM_STYLECHANGING, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 use yeet::settings::{HotkeyBinding, ScreenEdge};
 
@@ -404,4 +406,123 @@ fn prefers_dark() -> bool {
         // Absent on a system whose theme was never changed, which is light.
         _ => super::registry::current_user_dword(PERSONALIZE, "AppsUseLightTheme") == Some(0),
     }
+}
+
+/// The class of the window the shell's drag helper creates to carry the drag
+/// image. Its life is exactly the life of an OLE drag, and its creation and
+/// destruction are both reported by an accessibility event hook — which is
+/// the closest thing Windows offers to the global drag notification macOS
+/// gives Yoink.
+const DRAG_IMAGE_CLASS: &str = "SysDragImage";
+
+/// What the hook procedure calls once it has decided a drag started or ended.
+type DragObserver = std::rc::Rc<dyn Fn(super::DragPhase)>;
+
+thread_local! {
+    /// Where the hook procedure finds the UI. A `WINEVENTPROC` is a plain
+    /// function pointer with no user data, and an out-of-context hook is
+    /// dispatched on the thread that installed it, so the main thread's own
+    /// storage is both the only option and the correct one.
+    ///
+    /// Reference counted so the hook can let go of the cell before calling
+    /// out: window events keep arriving while the shelf is being revealed, and
+    /// a borrow held across that call would turn a re-entrant event into a
+    /// panic inside an FFI callback.
+    static DRAG_OBSERVER: std::cell::RefCell<Option<DragObserver>> =
+        const { std::cell::RefCell::new(None) };
+    /// The drag image window currently on screen, so an unrelated window
+    /// closing cannot be mistaken for the end of a drag.
+    static DRAG_IMAGE: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
+}
+
+pub struct DragWatch {
+    hook: HWINEVENTHOOK,
+}
+
+impl Drop for DragWatch {
+    fn drop(&mut self) {
+        let _ = unsafe { UnhookWinEvent(self.hook) };
+        DRAG_OBSERVER.with(|observer| observer.borrow_mut().take());
+        DRAG_IMAGE.with(|hwnd| hwnd.set(0));
+    }
+}
+
+pub fn watch_global_drags(callback: impl Fn(super::DragPhase) + 'static) -> Option<DragWatch> {
+    // Out-of-context so nothing of Yeet is injected into the applications
+    // being watched, and skipping our own process so dragging an item off the
+    // shelf never looks like a reason to reveal the shelf.
+    let hook = unsafe {
+        SetWinEventHook(
+            EVENT_OBJECT_CREATE,
+            EVENT_OBJECT_DESTROY,
+            None,
+            Some(on_window_event),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+        )
+    };
+    if hook.is_invalid() {
+        eprintln!("yeet: could not watch for drags; the edge strip still reveals the shelf");
+        return None;
+    }
+    DRAG_OBSERVER.with(|observer| *observer.borrow_mut() = Some(std::rc::Rc::new(callback)));
+    DRAG_IMAGE.with(|hwnd| hwnd.set(0));
+    Some(DragWatch { hook })
+}
+
+unsafe extern "system" fn on_window_event(
+    _hook: HWINEVENTHOOK,
+    event: u32,
+    hwnd: HWND,
+    id_object: i32,
+    id_child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    // Every control, menu item and list row in the session comes through here.
+    // Rejecting everything that is not a top-level window keeps the work to
+    // two integer comparisons for all of them.
+    if id_object != OBJID_WINDOW.0 || id_child != CHILDID_SELF as i32 || hwnd.is_invalid() {
+        return;
+    }
+    let phase = match event {
+        EVENT_OBJECT_CREATE => {
+            if !is_drag_image(hwnd) || DRAG_IMAGE.with(|current| current.get()) != 0 {
+                return;
+            }
+            DRAG_IMAGE.with(|current| current.set(hwnd.0 as isize));
+            super::DragPhase::Begin
+        }
+        EVENT_OBJECT_DESTROY => {
+            if DRAG_IMAGE.with(|current| current.get()) != hwnd.0 as isize {
+                return;
+            }
+            DRAG_IMAGE.with(|current| current.set(0));
+            super::DragPhase::End
+        }
+        _ => return,
+    };
+    let observer = DRAG_OBSERVER.with(|observer| observer.borrow().clone());
+    if let Some(observer) = observer {
+        observer(phase);
+    }
+}
+
+/// Whether a window is the shell's drag image.
+///
+/// Asked only of freshly created top-level windows, and only until one is
+/// found, so the class-name round trip is rare. A destroyed window is matched
+/// by handle instead: its class is no longer readable by the time the event
+/// arrives.
+fn is_drag_image(hwnd: HWND) -> bool {
+    let mut class = [0u16; 64];
+    let length = unsafe { GetClassNameW(hwnd, &mut class) };
+    if length <= 0 {
+        return false;
+    }
+    class[..length as usize]
+        .iter()
+        .copied()
+        .eq(DRAG_IMAGE_CLASS.encode_utf16())
 }

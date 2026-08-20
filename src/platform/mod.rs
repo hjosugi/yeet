@@ -18,6 +18,8 @@ mod registry;
 mod win32;
 #[cfg(target_os = "linux")]
 mod x11;
+#[cfg(target_os = "linux")]
+mod xdnd;
 
 use gtk::gdk;
 #[cfg(not(target_os = "windows"))]
@@ -56,6 +58,93 @@ impl std::fmt::Display for GlobalHotkeyError {
             Self::Unavailable(detail) => write!(formatter, "global shortcut unavailable: {detail}"),
         }
     }
+}
+
+/// The two moments of a drag that Yeet cares about.
+///
+/// Only the transitions cross the platform boundary. What is being dragged is
+/// never inspected until it is actually dropped on the shelf, so a drag that
+/// passes Yeet by leaves nothing behind but the reveal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DragPhase {
+    Begin,
+    End,
+}
+
+/// Report whether this session can tell Yeet that a drag started anywhere on
+/// screen — Yoink's summon-on-drag trigger.
+///
+/// False is not a failure: the always-mapped edge strip still reveals the
+/// shelf when a drag reaches it, which is the portable trigger Yeet was built
+/// around. This only says whether the user can be spared the aim.
+#[cfg(target_os = "linux")]
+pub fn supports_drag_watch() -> bool {
+    xdnd::available()
+}
+
+#[cfg(target_os = "windows")]
+pub fn supports_drag_watch() -> bool {
+    true
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+pub fn supports_drag_watch() -> bool {
+    false
+}
+
+/// A live global-drag watch. Dropping it stops the reveals.
+#[cfg(target_os = "linux")]
+pub struct DragWatch {
+    _watch: xdnd::Watch,
+    pump: glib::JoinHandle<()>,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for DragWatch {
+    fn drop(&mut self) {
+        self.pump.abort();
+    }
+}
+
+/// Call `callback` on the main thread whenever a drag starts or ends.
+///
+/// `None` means this session offers no such notification and the edge strip
+/// remains the only trigger.
+///
+/// The watcher itself lives on a worker thread — X11 wants a blocking wait on
+/// its own connection — so phases are handed to the main loop over a channel,
+/// the same shape the global shortcut uses and for the same reason: the GTK
+/// side of Yeet is not `Send`, and an awaited channel costs nothing while
+/// nobody is dragging.
+#[cfg(target_os = "linux")]
+pub fn watch_global_drags(callback: impl Fn(DragPhase) + 'static) -> Option<DragWatch> {
+    let (sender, receiver) = async_channel::unbounded();
+    let watch = xdnd::watch(sender)?;
+    let pump = glib::spawn_future_local(async move {
+        while let Ok(phase) = receiver.recv().await {
+            callback(phase);
+        }
+    });
+    Some(DragWatch {
+        _watch: watch,
+        pump,
+    })
+}
+
+#[cfg(target_os = "windows")]
+pub use win32::DragWatch;
+
+#[cfg(target_os = "windows")]
+pub fn watch_global_drags(callback: impl Fn(DragPhase) + 'static) -> Option<DragWatch> {
+    win32::watch_global_drags(callback)
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+pub struct DragWatch;
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+pub fn watch_global_drags(_callback: impl Fn(DragPhase) + 'static) -> Option<DragWatch> {
+    None
 }
 
 #[cfg(target_os = "windows")]

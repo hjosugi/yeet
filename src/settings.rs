@@ -254,6 +254,14 @@ pub enum ScreenEdge {
 #[serde(default)]
 pub struct Settings {
     pub auto_hide: bool,
+    /// Reveal the shelf as soon as a drag starts anywhere on the screen.
+    ///
+    /// Yoink's defining behaviour, and the default here for the same reason:
+    /// the shelf is only useful if it is already on screen by the time the
+    /// user has decided they want it. Where no global drag notification
+    /// exists (see `platform::supports_drag_watch`) the edge strip remains
+    /// the trigger and this setting simply has nothing to act on.
+    pub summon_on_drag: bool,
     pub restore_shelf: bool,
     pub deduplicate_items: bool,
     pub stack_multi_drop: bool,
@@ -282,6 +290,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             auto_hide: true,
+            summon_on_drag: true,
             restore_shelf: true,
             deduplicate_items: true,
             stack_multi_drop: false,
@@ -362,6 +371,7 @@ mod tests {
     fn defaults_are_safe() {
         let settings = Settings::default();
         assert!(settings.auto_hide);
+        assert!(settings.summon_on_drag);
         assert!(settings.restore_shelf);
         assert!(settings.deduplicate_items);
         assert!(!settings.stack_multi_drop);
@@ -379,6 +389,7 @@ mod tests {
     fn missing_fields_use_defaults() {
         let settings: Settings = serde_json::from_str(r#"{"auto_hide":false}"#).unwrap();
         assert!(!settings.auto_hide);
+        assert!(settings.summon_on_drag);
         assert!(settings.restore_shelf);
         assert!(settings.deduplicate_items);
         assert!(!settings.stack_multi_drop);
@@ -475,6 +486,9 @@ mod tests {
 
         assert!(!settings.auto_hide);
         assert!(!settings.restore_shelf);
+        // Written before the mode existed, so the file cannot say anything
+        // about it; the user gets the behaviour a fresh install would give.
+        assert!(settings.summon_on_drag);
         assert!(settings.deduplicate_items);
         assert!(!settings.stack_multi_drop);
         assert_eq!(settings.edge, ScreenEdge::Left);

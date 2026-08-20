@@ -4,9 +4,10 @@
 
 Wayland と Windows 向けの、Yoink ライクな軽量ドラッグ＆ドロップ shelf です。
 
-ファイルを画面端の細い strip にドラッグすると shelf が現れます。いったん shelf
-へ置いて移動先を開き、そこからもう一度ドラッグできます。受け入れられた drop
-だけを削除し、Esc や無効な場所への drop で item を失いません。
+どこかでファイルのドラッグを始めた時点で shelf が現れます。いったん shelf へ置いて
+移動先を開き、そこからもう一度ドラッグできます。受け入れられた drop だけを削除し、
+Esc や無効な場所への drop で item を失いません。ドラッグ開始を検出できない環境では、
+従来どおり画面端の細い strip にドラッグすると shelf が現れます。
 
 ![2つのファイルを保持したYeetシェルフ](docs/screenshots/yeet-linux-dark.png)
 
@@ -45,6 +46,7 @@ portable ZIPを取得します。起動後、既定のCtrl+Alt+Yまたは通知�
 
 | 機能 | Yeet | Yoink (macOS) | DropPoint | dragon |
 | --- | --- | --- | --- | --- |
+| dragを始めた時点で表示 | X11/XWaylandとWindowsで対応、既定でon | 対応 | 手動/shortcut | 非対応 |
 | 画面端へのdrag中に表示 | 常駐する細いstrip | 対応 | 手動/shortcut | CLI起動 |
 | Wayland native統合 | `gtk4-layer-shell`＋fallback | 対象外 | Chromium/Wayland | GTK 3、X11中心 |
 | Windows対応 | 同じRust codebaseのnative backend | 非対応 | Electron版あり | 非対応 |
@@ -57,17 +59,43 @@ portable ZIPを取得します。起動後、既定のCtrl+Alt+Yまたは通知�
 この表は製品の方向性を比較したもので、性能benchmarkや全環境での動作保証では
 ありません。
 
+## ドラッグ中に自動で表示
+
+「ドラッグ中に自動で表示」は既定でonで、Yoinkと同じ挙動——画面端まで運ばなくても、
+dragを始めた時点でshelfが出る——を与える設定です。従来のtriggerと排他ではありません。
+Settingsでoffにしても、edge strip、global shortcut、CLIはそのまま使えます。
+
+何を検出できるかはsessionによって変わり、Settingsのswitchがどちらであるかを示します。
+
+| session | shelfを呼び出せるdrag |
+| --- | --- |
+| X11、またはXWaylandが動作しているWayland | すべてのX11/XWayland drag source。XDNDが要求する`XdndSelection`の所有権移動をXFIXESで受け取ります |
+| Windows | drag imageを描画するapplication全般。Explorer、browser、Officeはいずれも該当します |
+| XWaylandのないWayland | なし。Wayland clientは自分のsurface外のdragを見られないため、edge stripがtriggerのままです |
+
+Yeetが知るのは「dragが存在すること」だけです。中身はshelfにdropされるまで読みません。
+
 ## 常駐時の動作
 
 shelfが空のあいだ、Yeetは通知領域のiconと画面端の数pixelのstripだけになり、window
 も定期処理も持ちません。pollingは一切していません。tray、global shortcut、drop
-targetはいずれも待っているevent自身で起こされるため、待機中のYeetはtimerによる
-wakeupを1回も発生させません。
+target、drag watchはいずれも待っているevent自身で起こされるため、待機中のYeetは
+timerによるwakeupを1回も発生させません。
 
-dragの検知はstrip自身が担います。stripはfile、URI list、text、imageを宣言した
-通常のdrop targetなので、それらを運んでいないdragはそもそも渡されず、drag中で
-ないpointerが横切っても何も起きません。pointer hookも、cursorのpolling も、他の
-applicationのdrag状態の読み取りも行いません。
+stripに届いたdragの検知はstrip自身が担います。stripはfile、URI list、text、image
+を宣言した通常のdrop targetなので、それらを運んでいないdragはそもそも渡されず、
+drag中でないpointerが横切っても何も起きません。
+
+「ドラッグ中に自動で表示」が追加するのはhookではなくsubscriptionです。X11では
+XDNDがdrag sourceに所有を要求するselection `XdndSelection` に対する
+`XFixesSelectSelectionInput`、Windowsではout-of-contextの`SetWinEventHook`で
+top-level windowの生成通知を受けるだけで、監視対象のapplicationにYeetのcodeは
+一切載りません。どちらもdragの中身は読まず、存在しないdragを見ることもありません。
+
+唯一通知されないのはdragの終了です。そのため、Yeetが既に反応したdragが進行中の
+あいだだけ、X11 sessionは0.12秒ごとにpointer buttonが押されたままかをserverへ
+問い合わせます。この問い合わせはdragとともに始まりdragとともに終わります。
+drag中でなければ見るものはなく、timerも動きません。
 
 残っている繰り返しtimerはshelfの位置を0.6秒ごとに読むものだけで、shelfが表示中
 かつuserがdragで動かした場合にのみ動きます。interactive moveの終了はwindow
@@ -92,6 +120,9 @@ managerもGTKも通知しないため、位置は見に行くしか知る方法�
 - shelfはgripをdragして好きな位置へ移動でき、次回もその位置に出ます。設定で
   画面端を選び直すと、その端へのanchorに戻ります。
 - shelf背景の不透明度を設定できます。
+- 「ドラッグ中に自動で表示」: どこかでdragが始まった時点でshelfが現れ、使われずに
+  dragが終われば自動的に引っ込みます。既定でonで、Settingsから切り替えられます。
+  edge strip、shortcut、CLIを置き換えるものではありません。
 - multi-monitor strip、永続化、preview、日英UI、keyboard操作、theme、autostartを
   同じRust/GTK 4実装で提供します。
 

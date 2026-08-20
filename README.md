@@ -57,6 +57,7 @@ Wayland first, with Windows kept in the same codebase.
 
 | Capability | Yeet | Yoink (macOS) | DropPoint | dragon |
 | --- | --- | --- | --- | --- |
+| Reveal as soon as a drag starts | Yes on X11/XWayland and Windows, on by default | Yes | Manual/shortcut | No |
 | Reveal while dragging at a screen edge | Yes, via an always-mapped strip | Yes | Manual/shortcut | CLI launch |
 | Native Wayland integration | `gtk4-layer-shell` with a documented fallback | N/A | Chromium/Wayland | GTK 3, X11-first |
 | Windows support | Native backend in the same Rust codebase | No | Yes, Electron | No |
@@ -72,28 +73,63 @@ environments.
 
 ## Core behavior
 
-1. **Summon** — a few-pixel *edge strip* lives at the edge of your screen.
-   Drag files against it and the shelf slides out. Also summonable via
-   global shortcut or `yeet <files…>` from a terminal.
+1. **Summon** — start dragging anything, anywhere, and the shelf comes out to
+   meet you. Where the desktop cannot report that a drag began, a few-pixel
+   *edge strip* at the edge of the screen catches the drag instead: drag files
+   against it and the shelf slides out. Also summonable via global shortcut
+   (Ctrl+Alt+Y by default) or `yeet <files…>` from a terminal.
 2. **Hold** — drop any number of files (or text/image snippets) onto the
    shelf. Your mouse is free; go find the destination window/workspace.
 3. **Release** — drag items (individually, multi-selected, or as a whole
    stack) out of the shelf into any app.
-4. **Vanish** — when the last item leaves the shelf, it hides itself.
+4. **Vanish** — when the last item leaves the shelf, it hides itself. A shelf
+   that came out for a drag and was not used goes away with the drag.
+
+### Show while dragging
+
+*Show while dragging* is on by default and is the setting that makes the shelf
+behave like Yoink's: it appears the moment a drag starts, rather than when the
+drag reaches the screen edge. The two triggers coexist — turning the mode off
+in settings leaves the edge strip, the shortcut and the CLI exactly as they
+were.
+
+What the mode can be told depends on the session, and the settings switch says
+which one you have:
+
+| Session | Drags that summon the shelf |
+| --- | --- |
+| X11, or Wayland with XWayland running | Every X11 and XWayland drag source, via the XFIXES notification that XDND's own selection changed hands |
+| Windows | Any application that draws a drag image, which is what Explorer, browsers and Office all do |
+| Wayland with no XWayland | None: a Wayland client is not allowed to see drags outside its own surfaces, so the edge strip stays the trigger |
+
+Yeet learns only *that* a drag exists. Nothing about its contents is read
+unless it is dropped on the shelf.
 
 ## Running in the background
 
 With an empty shelf, Yeet is a notification-area icon and a few-pixel strip at
 the screen edge — no window, and no recurring work. Nothing is polled: the
-tray, the global shortcut and the drop targets each wake the process through
-the event they are waiting for, so an idle Yeet performs no timer wakeups at
-all and reads no clocks.
+tray, the global shortcut, the drop targets and the drag watch each wake the
+process through the event they are waiting for, so an idle Yeet performs no
+timer wakeups at all and reads no clocks.
 
-Drags are detected by the strip itself, which is an ordinary drop target
-declared for files, URI lists, text and images. A drag that carries none of
-those is not offered to it, and a pointer crossing the strip without a drag in
-progress does nothing at all. There is no pointer hook, no polling of the
-cursor, and no reading of other applications' drag state.
+Drags that reach the strip are detected by the strip itself, which is an
+ordinary drop target declared for files, URI lists, text and images. A drag
+that carries none of those is not offered to it, and a pointer crossing the
+strip without a drag in progress does nothing at all.
+
+*Show while dragging* adds one subscription, and it is a subscription rather
+than a hook: on X11 it is `XFixesSelectSelectionInput` on `XdndSelection`, the
+selection XDND requires a drag source to own, and on Windows it is an
+out-of-context `SetWinEventHook` that reports top-level windows being created
+— nothing of Yeet is loaded into the applications being watched. Neither one
+reads the drag's contents, and neither can see a drag that does not exist.
+
+The end of a drag is the one thing no such notification reports, so while a
+drag Yeet has already reacted to is still in flight, X11 sessions ask the
+server every 0.12 seconds whether a pointer button is still held. That
+sampling starts with the drag and stops with it; between drags there is
+nothing to sample and no timer to run.
 
 The one repeating timer left samples the shelf's position every 0.6 seconds,
 and only while the shelf is both on screen and somewhere the user dragged it
@@ -107,6 +143,7 @@ last sample and stops the timer.
 
 | | Wayland (Linux) | Windows |
 | --- | --- | --- |
+| Summon on drag | XFIXES `XdndSelection` owner notification (X11/XWayland) | `SetWinEventHook`, out of context |
 | Edge trigger | `zwlr_layer_shell_v1` via `gtk4-layer-shell` | topmost frameless OLE drop-target strip |
 | Shelf window | layer-shell overlay surface | frameless topmost tool window |
 | Global shortcut | XDG GlobalShortcuts portal, with `yeet --toggle` fallback | configurable, default Ctrl+Alt+Y via `RegisterHotKey` |
@@ -128,6 +165,10 @@ last sample and stops the timer.
   bytes and a file-list fallback during drag-out.
 - Atomic shelf persistence and single-instance argument forwarding.
 - `yeet FILE...`, `--toggle`, `--clear`, `--hidden` and `--help`.
+- Show while dragging: the shelf reveals itself as soon as a drag starts
+  anywhere, and steps back out of the way if the drag ends without using it.
+  On by default, switchable in settings, and never a replacement for the edge
+  strip, the shortcut or the CLI.
 - A strip on every monitor; the shelf opens on the monitor the drag entered.
 - `gtk4-layer-shell` overlay surfaces where available and a documented GNOME
   shortcut/CLI fallback.

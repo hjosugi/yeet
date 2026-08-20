@@ -42,6 +42,19 @@ its saved shelf entry. Unpinned drags offer both copy and move, and GTK's
 explicit move/delete result is treated as an accepted move even when a backend
 does not retain the selected-action flag at drag end.
 
+Summon on drag (`summon_on_drag`, on by default) reveals the shelf as soon as a
+drag begins anywhere, rather than when the drag reaches the edge strip. Windows
+publishes no drag hook by that name, so Yeet watches for the drag image
+instead: `IDragSourceHelper` creates a `SysDragImage` top-level window for the
+length of an OLE drag, and an out-of-context `SetWinEventHook` over
+`EVENT_OBJECT_CREATE`/`EVENT_OBJECT_DESTROY` reports it being created and
+destroyed. Out-of-context means no DLL of Yeet's is loaded into the observed
+application; `WINEVENT_SKIPOWNPROCESS` means dragging an item off the shelf is
+never mistaken for a reason to show it. Every event that is not a top-level
+window is rejected on two integer comparisons before anything else happens, and
+a source that draws no drag image simply falls back to the edge strip. Nothing
+about the drag's contents is read until it is dropped on the shelf.
+
 The notification-area icon is implemented directly with `Shell_NotifyIconW`.
 Its tooltip includes the current shelf item count, left-click toggles the shelf,
 and its menu exposes Show/Hide, Capture Clipboard, Clear, Settings, and Quit. It
@@ -62,6 +75,12 @@ Windows-target compilation and CI do not replace these runtime checks; the
 following tray, hotkey, focus, and installer checks remain real-machine work.
 
 - Explorer → edge strip → shelf works for one file, many files and a folder.
+- Starting a drag in Explorer reveals the shelf without going near the strip,
+  and the same holds for a browser, Office and the desktop. Repeat with
+  *Show while dragging* off to confirm the strip is still the trigger.
+- A drag that is cancelled or dropped elsewhere leaves no shelf behind; a drag
+  dropped on the summoned shelf leaves the shelf up with the item on it.
+- Dragging an item off the shelf does not re-summon the shelf.
 - Shelf → Explorer and Desktop offers copy/move and honors Ctrl/Shift.
 - Cancel with Esc and drop on an invalid target both retain the shelf item.
 - Browser upload, Office, Slack and Discord accept a dragged local file.
