@@ -30,7 +30,7 @@ Wayland and Windows.
 
 | | Yoink (macOS) | DropPoint (Electron) | dragon (GTK3 CLI) | **Yeet** |
 |---|---|---|---|---|
-| Summon on drag | ✅ global drag detection | ❌ manual/shortcut | ❌ CLI | ✅ edge strip (see §5) |
+| Summon on drag | ✅ global drag detection | ❌ manual/shortcut | ❌ CLI | ✅ drag watch where the session reports drags, edge strip everywhere (see §5) |
 | Hide when empty | ✅ | ❌ | option (`--and-exit`) | ✅ core requirement |
 | Wayland | — | ⚠️ weak (Chromium) | ⚠️ X11-first | ✅ layer-shell |
 | Windows | — | ✅ | ❌ | ✅ |
@@ -90,11 +90,19 @@ are checked against protocol availability at runtime.
 ### Shelf lifecycle
 
 ```
-hidden ──(drag hovers edge strip / hotkey / CLI / tray)──▶ visible
+hidden ──(drag begins anywhere / drag hovers edge strip
+          / hotkey / CLI / tray)──────────────────────▶ visible
 visible ──(last item leaves shelf)──▶ hidden          [G2]
 visible ──(Esc / focus loss with 0 items)──▶ hidden
+visible ──(the drag that summoned it ended, nothing dropped)──▶ hidden
 visible + pinned items ──▶ stays visible until unpinned & empty
 ```
+
+A shelf that appeared for a drag is put back when that drag ends unused, and
+that is deliberately not the same rule as "hide when empty": the user never
+asked for this shelf, so it leaves without consulting the setting that governs
+the ones they did ask for. A shelf that was already visible is never taken
+away by a drag ending.
 
 ### Items
 
@@ -126,14 +134,38 @@ visible + pinned items ──▶ stays visible until unpinned & empty
 ### 5.1 The core problem: detecting a drag globally
 
 macOS lets Yoink observe global drags. **Wayland forbids this by design**
-(clients only see drags that enter their own surfaces), and Windows has no
-public global-drag hook either. The portable answer:
+(clients only see drags that enter their own surfaces), and Windows exposes no
+drag hook by that name. The portable answer is the floor, and two of the three
+sessions can do better than it:
 
 > Keep a **tiny always-present edge strip** (4–8 px) owned by Yeet at a
 > screen edge. During any DnD, the moment the user drags onto the strip the
 > compositor/OS delivers `drag-enter` to us — we then reveal the shelf right
 > next to it, and the user drops onto the shelf. The strip *is* the global
 > drag detector, implemented with only public APIs on both platforms.
+
+**Summon on drag** (`summon_on_drag`, default on) adds the trigger Yoink
+actually has, wherever the session can supply it. It never replaces the strip:
+where the notification is unavailable the setting simply has nothing to act on,
+and the strip, the shortcut and the CLI are untouched everywhere.
+
+- **X11 and XWayland.** XDND obliges a drag source to own the `XdndSelection`
+  selection for the duration of the drag, so `XFixesSelectSelectionInput` on
+  that selection turns drag-start into an ordinary X event. This covers a pure
+  X11 session completely, and a Wayland session partially: XWayland clients are
+  seen, Wayland-native ones are not.
+- **Windows.** An out-of-context `SetWinEventHook` over
+  `EVENT_OBJECT_CREATE`/`EVENT_OBJECT_DESTROY` watches for the `SysDragImage`
+  window the shell drag helper creates and destroys around a drag. Nothing is
+  injected into the observed process, and `WINEVENT_SKIPOWNPROCESS` keeps
+  Yeet's own drag-out from looking like a reason to appear.
+- **Native Wayland with no XWayland.** Unavailable, and correctly so. The
+  settings switch is disabled and says the edge strip is the trigger.
+
+Neither backend reads what is being dragged; both report only that a drag
+exists. Drag *end* is reported by neither — XDND keeps the selection past the
+drop so the target can still fetch the data — so the pointer button is sampled
+instead, and only between a drag Yeet has already reacted to and its release.
 
 ### 5.2 Wayland (Linux)
 
@@ -145,6 +177,9 @@ public global-drag hook either. The portable answer:
   Two surfaces (rather than resizing one mid-drag) so the active drag simply
   crosses from strip → shelf; surface-resize-during-drag is compositor
   minefield territory. **[Spike S1: validate on sway/Hyprland/KWin.]**
+- **Summon on drag:** XFIXES on `XdndSelection` over a private X connection,
+  covering XWayland drag sources on a Wayland session and every source on an
+  X11 one. See §5.1.
 - **Global shortcut:** `org.freedesktop.portal.GlobalShortcuts` registers the
   toggle binding on Wayland. If the portal or backend is unavailable, a
   compositor keybinding invokes `yeet --toggle` over the single-instance IPC.
@@ -164,6 +199,8 @@ public global-drag hook either. The portable answer:
 - **Shelf:** frameless topmost tool window, edge-snapped, rounded corners +
   dark mode via DWM attributes. `WS_EX_TOPMOST` and `HWND_TOPMOST` are
   reapplied whenever the shelf is mapped.
+- **Summon on drag:** out-of-context `SetWinEventHook` watching for the
+  `SysDragImage` window. See §5.1.
 - **Hotkey:** Ctrl+Alt+Y via `RegisterHotKey`; a quick double press captures
   the clipboard.
 - **Tray:** a native notification-area menu exposes show/hide, clipboard

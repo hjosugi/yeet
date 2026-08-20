@@ -48,6 +48,17 @@ pub struct Ui {
     watched_monitors: RefCell<Vec<glib::WeakRef<gdk::Monitor>>>,
     selected: RefCell<HashSet<Uuid>>,
     global_hotkey: RefCell<Option<platform::GlobalHotkey>>,
+    /// The live summon-on-drag watch, absent when the mode is off or the
+    /// session cannot report drags.
+    drag_watch: RefCell<Option<platform::DragWatch>>,
+    /// Set while the shelf is on screen only because a drag started.
+    ///
+    /// It is what tells a drag that ended in nothing from a shelf the user
+    /// summoned deliberately, so only the former is taken away again.
+    summoned_by_drag: Cell<bool>,
+    /// Counts the drags the watch has reported, so the put-back scheduled for
+    /// one drag can recognise that another has started since.
+    drag_generation: Cell<u64>,
     desktop_services: RefCell<Option<DesktopServices>>,
     drag_active: Cell<bool>,
     /// Set once the user grabs the move handle.
@@ -260,6 +271,9 @@ impl Ui {
             watched_monitors: RefCell::new(Vec::new()),
             selected: RefCell::new(HashSet::new()),
             global_hotkey: RefCell::new(None),
+            drag_watch: RefCell::new(None),
+            summoned_by_drag: Cell::new(false),
+            drag_generation: Cell::new(0),
             desktop_services: RefCell::new(None),
             drag_active: Cell::new(false),
             shelf_moved: Cell::new(settings_shelf_position.is_some()),
@@ -389,7 +403,95 @@ impl Ui {
             services.update_count(ui.model.borrow().items().len());
             *ui.desktop_services.borrow_mut() = Some(services);
         }
+        ui.apply_drag_watch();
         ui
+    }
+
+    /// Match the live global-drag watch to the setting.
+    ///
+    /// Turning the mode off releases the watch outright rather than leaving it
+    /// installed and ignoring it: on Windows it is a system-wide event hook,
+    /// and a user who switched the mode off should stop paying for it.
+    fn apply_drag_watch(self: &Rc<Self>) {
+        let wanted = self.settings.borrow().summon_on_drag && platform::supports_drag_watch();
+        if wanted == self.drag_watch.borrow().is_some() {
+            return;
+        }
+        if !wanted {
+            self.drag_watch.borrow_mut().take();
+            self.summoned_by_drag.set(false);
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        let watch = platform::watch_global_drags(move |phase| {
+            if let Some(ui) = weak.upgrade() {
+                ui.handle_global_drag(phase);
+            }
+        });
+        *self.drag_watch.borrow_mut() = watch;
+    }
+
+    /// Reveal the shelf for the duration of somebody else's drag.
+    ///
+    /// A shelf that is already up is left exactly as it is: re-showing it
+    /// would move the focus mid-drag, and a shelf the user summoned on purpose
+    /// must not be taken away when the drag ends. A shelf that is up because
+    /// of an earlier drag is instead adopted by this one, which is what keeps
+    /// two drags in quick succession from putting it away under the second.
+    fn handle_global_drag(self: &Rc<Self>, phase: platform::DragPhase) {
+        match phase {
+            platform::DragPhase::Begin => {
+                self.drag_generation
+                    .set(self.drag_generation.get().wrapping_add(1));
+                if self.shelf_shown.get() || self.drag_active.get() {
+                    return;
+                }
+                self.summoned_by_drag.set(true);
+                self.show(None);
+            }
+            platform::DragPhase::End => {
+                if !self.summoned_by_drag.get() {
+                    return;
+                }
+                // The drop that fills the shelf and the release of the mouse
+                // button are the same gesture, and they do not arrive in a
+                // fixed order: the pointer is watched on another thread while
+                // the drop crosses GTK's own event queue. Deciding a moment
+                // later costs nothing and stops a successful drop from being
+                // followed by the shelf disappearing.
+                //
+                // The generation is what makes the wait safe. A drag that
+                // starts inside it has already claimed the shelf, so this
+                // put-back — belonging to the drag before it — stands down.
+                let generation = self.drag_generation.get();
+                let weak = Rc::downgrade(self);
+                glib::timeout_add_local_once(Duration::from_millis(250), move || {
+                    let Some(ui) = weak.upgrade() else {
+                        return;
+                    };
+                    if ui.drag_generation.get() != generation {
+                        return;
+                    }
+                    ui.summoned_by_drag.set(false);
+                    ui.hide_after_drag();
+                });
+            }
+        }
+    }
+
+    /// Put back a shelf that nothing was dropped onto.
+    ///
+    /// Deliberately not `hide_if_empty`: "hide when empty" describes what
+    /// happens to a shelf the user asked for, while this one appeared on its
+    /// own and has no reason to stay once the drag it appeared for is over.
+    fn hide_after_drag(self: &Rc<Self>) {
+        if !self.shelf_shown.get()
+            || self.drag_active.get()
+            || !self.model.borrow().items().is_empty()
+        {
+            return;
+        }
+        self.hide();
     }
 
     pub fn handle_arguments(
@@ -836,6 +938,7 @@ impl Ui {
 
     fn hide(self: &Rc<Self>) {
         self.shelf_shown.set(false);
+        self.summoned_by_drag.set(false);
         self.update_position_sampler();
         if self.settings.borrow().reduced_motion {
             finish_shelf_hide(&self.shelf);
@@ -1277,6 +1380,19 @@ impl Ui {
             .margin_end(20)
             .build();
         let settings = self.settings.borrow().clone();
+        // Offered everywhere so the mode is discoverable, but only usable
+        // where a drag can actually be noticed; the tooltip says which of the
+        // two triggers this session has rather than leaving a dead switch.
+        let watchable = platform::supports_drag_watch();
+        let summon_on_drag = gtk::Switch::builder()
+            .active(settings.summon_on_drag && watchable)
+            .sensitive(watchable)
+            .build();
+        summon_on_drag.set_tooltip_text(Some(tr(if watchable {
+            "summon_on_drag_hint"
+        } else {
+            "summon_on_drag_unavailable"
+        })));
         let auto_hide = gtk::Switch::builder().active(settings.auto_hide).build();
         let restore = gtk::Switch::builder()
             .active(settings.restore_shelf)
@@ -1342,23 +1458,24 @@ impl Ui {
             global_hotkey_error.set_text(&global_hotkey_error_text(&error));
             global_hotkey_error.set_visible(true);
         }
-        add_setting_row(&grid, 0, tr("hide_when_empty"), &auto_hide);
-        add_setting_row(&grid, 1, tr("restore_shelf"), &restore);
-        add_setting_row(&grid, 2, tr("deduplicate_items"), &deduplicate_items);
-        add_setting_row(&grid, 3, tr("stack_multi_drop"), &stack_multi_drop);
-        add_setting_row(&grid, 4, tr("start_session"), &autostart);
-        add_setting_row(&grid, 5, tr("edge_width"), &strip);
-        add_setting_row(&grid, 6, tr("shelf_opacity"), &opacity);
-        add_setting_row(&grid, 7, tr("theme"), &theme);
-        add_setting_row(&grid, 8, tr("language"), &language);
-        add_setting_row(&grid, 9, tr("reduced_motion"), &reduced_motion);
-        add_setting_row(&grid, 10, tr("screen_edge"), &edge);
+        add_setting_row(&grid, 0, tr("summon_on_drag"), &summon_on_drag);
+        add_setting_row(&grid, 1, tr("hide_when_empty"), &auto_hide);
+        add_setting_row(&grid, 2, tr("restore_shelf"), &restore);
+        add_setting_row(&grid, 3, tr("deduplicate_items"), &deduplicate_items);
+        add_setting_row(&grid, 4, tr("stack_multi_drop"), &stack_multi_drop);
+        add_setting_row(&grid, 5, tr("start_session"), &autostart);
+        add_setting_row(&grid, 6, tr("edge_width"), &strip);
+        add_setting_row(&grid, 7, tr("shelf_opacity"), &opacity);
+        add_setting_row(&grid, 8, tr("theme"), &theme);
+        add_setting_row(&grid, 9, tr("language"), &language);
+        add_setting_row(&grid, 10, tr("reduced_motion"), &reduced_motion);
+        add_setting_row(&grid, 11, tr("screen_edge"), &edge);
         let disabled_outputs_row = if cfg!(target_os = "windows") {
-            add_setting_row(&grid, 11, tr("global_hotkey"), &global_hotkey_control);
-            grid.attach(&global_hotkey_error, 0, 12, 2, 1);
-            13
+            add_setting_row(&grid, 12, tr("global_hotkey"), &global_hotkey_control);
+            grid.attach(&global_hotkey_error, 0, 13, 2, 1);
+            14
         } else {
-            11
+            12
         };
         add_setting_row(
             &grid,
@@ -1376,6 +1493,14 @@ impl Ui {
                 if switch.is_active() {
                     ui.hide_if_empty();
                 }
+            });
+        }
+        {
+            let ui = self.clone();
+            summon_on_drag.connect_active_notify(move |switch| {
+                ui.settings.borrow_mut().summon_on_drag = switch.is_active();
+                ui.save_settings();
+                ui.apply_drag_watch();
             });
         }
         connect_setting(&restore, self, |settings, value| {

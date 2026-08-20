@@ -16,6 +16,8 @@ is accepted only after a reviewer watches it and confirms the checklist below.
 | Windows light screenshot | `docs/screenshots/yeet-windows-light.png` | Not captured |
 | Linux full-loop WebM/GIF | `docs/screenshots/yeet-linux-demo.webm`, `.gif` | Not captured |
 | Windows full-loop WebM/GIF | `docs/screenshots/yeet-windows-demo.webm`, `.gif` | Not captured |
+| Linux edge-strip take (review only) | not published | Not captured |
+| Summon-on-drag cancel take (review only) | not published | Not captured |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -30,20 +32,31 @@ empty `Destination` folder. Use a 100% scale display, hide notifications and
 unrelated windows, and crop a region that includes the file manager, screen
 edge, shelf and destination. Never capture a real home directory or clipboard.
 
+Yeet has two summon triggers and the published loop shows the default one.
+Capture the loop with *Show while dragging* left on, and record the edge-strip
+take separately with the mode switched off — with it on, the shelf is already
+out before the pointer reaches the strip, so a single take cannot demonstrate
+both.
+
 For the full loop, perform these actions without cuts:
 
-1. Start with Yeet running and the shelf hidden.
-2. Drag `alpha.txt` from the file manager into the edge strip.
+1. Start with Yeet running, the shelf hidden and *Show while dragging* on.
+2. Begin dragging `alpha.txt` from the file manager, away from the screen edge,
+   and let the shelf come out on its own.
 3. Continue the same drag onto the revealed shelf and release it.
 4. Navigate to `Destination` without holding a mouse button.
 5. Drag `alpha.txt` out of the shelf and accept the drop in `Destination`.
 6. Leave the frame running until the empty shelf hides.
 
-Record a second internal review take that cancels step 5 with Esc and confirms
-the item remains. This cancellation take need not be published, but it is part
-of release verification. Capture snippet MIME behavior separately by dropping
-demo text and an image, then dragging each into an application that accepts its
-native content type.
+Record three further internal review takes. The first cancels step 5 with Esc
+and confirms the item remains. The second turns *Show while dragging* off and
+repeats steps 2 and 3 against the edge strip, confirming that trigger still
+works on its own. The third begins a drag and cancels it without going near the
+shelf, confirming the shelf that came out for it goes away again. None of the
+three need be published, but all three are part of release verification.
+
+Capture snippet MIME behavior separately by dropping demo text and an image,
+then dragging each into an application that accepts its native content type.
 
 ## Linux capture
 
@@ -103,8 +116,11 @@ the required ffmpeg device/encoder is unavailable.
   account names.
 - The platform, theme and release-candidate version match the filename and the
   pull request description.
-- The pointer, drag icon, edge reveal, accepted destination and final hide are
-  visible in the full-loop take.
+- The pointer, drag icon, the shelf arriving on its own, the accepted
+  destination and the final hide are all visible in the full-loop take, and the
+  shelf is visibly summoned before the pointer is anywhere near the edge.
+- The edge-strip review take shows the strip reveal with *Show while dragging*
+  off, and the cancel take shows an unused shelf leaving with its drag.
 - The video has no edit between drag-in and drag-out; the GIF is derived from
   the same WebM.
 - Text/image demonstrations use real applications and preserve the expected
