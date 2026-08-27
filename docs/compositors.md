@@ -6,13 +6,20 @@ Wayland session or a compile-only CI run.
 
 ## Expected modes
 
-| Environment | Mode | Edge drag summon | Other summon path |
-|---|---|---:|---|
-| sway / Hyprland / niri / river | `gtk4-layer-shell` overlay | expected | `yeet --toggle` |
-| KDE Plasma (Wayland) | `gtk4-layer-shell` overlay | expected | compositor binding |
-| GNOME Shell | XWayland dock strips + `_NET_WM_STATE_ABOVE` shelf | expected | portal shortcut, `yeet --toggle` |
-| GNOME Shell + Yeet extension | native Wayland, raised and placed by the extension | expected | portal shortcut, `yeet --toggle` |
-| X11 session | dock strips + `_NET_WM_STATE_ABOVE` shelf | expected | `yeet --toggle` |
+| Environment | Mode | Edge drag summon | Summon on drag | Other summon path |
+|---|---|---:|---|---|
+| sway / Hyprland / niri / river | `gtk4-layer-shell` overlay | expected | XWayland sources only, and only when XWayland is running | `yeet --toggle` |
+| KDE Plasma (Wayland) | `gtk4-layer-shell` overlay | expected | XWayland sources only, and only when XWayland is running | compositor binding |
+| GNOME Shell | XWayland dock strips + `_NET_WM_STATE_ABOVE` shelf | expected | XWayland sources only | portal shortcut, `yeet --toggle` |
+| GNOME Shell + Yeet extension | native Wayland, raised and placed by the extension | expected | XWayland sources only | portal shortcut, `yeet --toggle` |
+| X11 session | dock strips + `_NET_WM_STATE_ABOVE` shelf | expected | every drag source | `yeet --toggle` |
+
+"Summon on drag" is the `summon_on_drag` setting, on by default. It subscribes
+to XFIXES notifications for the `XdndSelection` selection, which every XDND
+drag source must own while it drags. A Wayland-native drag never touches that
+selection and is therefore invisible to it — the edge strip remains the trigger
+for those, which is why no row above reads "every drag source" on a Wayland
+session. A session with no `DISPLAY` at all disables the setting outright.
 
 Yeet checks `gtk4-layer-shell` protocol support at runtime. It configures
 separate overlay surfaces for the always-mapped strip and shelf, with
@@ -50,6 +57,8 @@ then repeat with two monitors whose scale factors differ.
 |---|---:|---:|---:|---:|---:|---:|
 | Strip appears on each output | ⬜ | ⬜ | ⬜ | 🟨 | ⬜ | ⬜ |
 | Entering strip reveals shelf mid-drag | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| XWayland drag reveals shelf without the strip | ⬜ | ⬜ | ⬜ | 🟨 | ⬜ | ⬜ |
+| Unused summon-on-drag shelf hides when the drag ends | ⬜ | ⬜ | ⬜ | 🟨 | ⬜ | ⬜ |
 | Drag continues strip → shelf and drops | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | Shelf stays above the drag source | ⬜ | ⬜ | ⬜ | 🟨 | ⬜ | ⬜ |
 | Shelf opens on entered output | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -69,7 +78,12 @@ windows rather than by a screenshot: the edge strip is created per output as
 `_NET_WM_WINDOW_TYPE_DOCK` with `_NET_WM_STATE_ABOVE`, spanning the full output
 height at the configured width, and the shelf carries `_NET_WM_STATE_ABOVE`,
 `_NET_WM_STATE_STICKY` and both skip hints. `yeet --toggle` reaches the first
-instance. The global shortcut is registered by GNOME
+instance. Summon on drag was exercised on the same session by taking ownership
+of `XdndSelection` from a second X client, which is the signal a real drag
+source produces: the shelf mapped within about 90 ms and unmapped again once
+the pointer showed no button held. That covers the notification, the reveal and
+the put-back, but not a real file-manager drag, so both summon-on-drag rows
+stay partial. The global shortcut is registered by GNOME
 (`<Control><Alt>y` appears under
 `/org/gnome/settings-daemon/global-shortcuts/io.github.hjosugi.Yeet/`), but
 delivery of the activation was not exercised. The mid-drag rows still need a

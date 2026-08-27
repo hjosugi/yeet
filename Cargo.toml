@@ -6,7 +6,7 @@ default-members = ["."]
 
 [package]
 name = "yeet"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.92"
 description = "A native drag-and-drop shelf for Wayland and Windows"
@@ -36,7 +36,7 @@ gdk4-x11 = "0.11"
 gtk4-layer-shell = "0.8"
 ksni = "0.3.5"
 tokio = { version = "1", features = ["rt", "time"] }
-x11rb = { version = "0.13", default-features = false }
+x11rb = { version = "0.13", default-features = false, features = ["xfixes"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 gdk-win32 = { package = "gdk4-win32", version = "0.11", features = ["win32"] }
@@ -47,6 +47,7 @@ windows = { version = "0.62", features = [
     "Win32_System_Console",
     "Win32_System_LibraryLoader",
     "Win32_System_Registry",
+    "Win32_UI_Accessibility",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_HiDpi",
     "Win32_UI_Shell",

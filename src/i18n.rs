@@ -76,6 +76,13 @@ fn english(key: &str) -> &'static str {
         "dark" => "Dark",
         "english" => "English",
         "japanese" => "Japanese",
+        "summon_on_drag" => "Show while dragging",
+        "summon_on_drag_hint" => {
+            "Reveal the shelf as soon as a drag starts anywhere, without aiming at the screen edge first."
+        }
+        "summon_on_drag_unavailable" => {
+            "This session cannot report drags that start elsewhere. Drag to the screen edge to reveal the shelf."
+        }
         "hide_when_empty" => "Hide when empty",
         "restore_shelf" => "Restore shelf at launch",
         "deduplicate_items" => "Ignore duplicate items",
@@ -145,6 +152,13 @@ fn japanese(key: &str) -> &'static str {
         "dark" => "ダーク",
         "english" => "英語",
         "japanese" => "日本語",
+        "summon_on_drag" => "ドラッグ中に自動で表示",
+        "summon_on_drag_hint" => {
+            "どこかでドラッグを始めた時点でシェルフを表示します。画面端まで運ぶ必要はありません。"
+        }
+        "summon_on_drag_unavailable" => {
+            "このセッションでは他アプリのドラッグ開始を検出できません。画面端までドラッグするとシェルフが出ます。"
+        }
         "hide_when_empty" => "空になったら隠す",
         "restore_shelf" => "起動時にシェルフを復元",
         "deduplicate_items" => "重複項目を追加しない",
@@ -215,6 +229,9 @@ mod tests {
         "dark",
         "english",
         "japanese",
+        "summon_on_drag",
+        "summon_on_drag_hint",
+        "summon_on_drag_unavailable",
         "hide_when_empty",
         "restore_shelf",
         "deduplicate_items",
