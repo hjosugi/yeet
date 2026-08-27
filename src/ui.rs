@@ -469,7 +469,7 @@ impl Ui {
                     let Some(ui) = weak.upgrade() else {
                         return;
                     };
-                    if ui.drag_generation.get() != generation {
+                    if ui.drag_generation.get() != generation || !ui.summoned_by_drag.get() {
                         return;
                     }
                     ui.summoned_by_drag.set(false);
