@@ -19,20 +19,21 @@ validation.
 These depend on the final tag and must be calculated from that release's
 artifacts, not guessed or copied from an earlier release:
 
-- [ ] `packaging/arch/PKGBUILD` source-archive SHA-256 for `v0.7.0.tar.gz`, then
+- [x] `packaging/arch/PKGBUILD` source-archive SHA-256 for `v0.7.0.tar.gz`, then
   regenerate `.SRCINFO` from it.
-- [ ] `packaging/arch/PKGBUILD-git` and `.SRCINFO-git` generated version at the
+- [x] `packaging/arch/PKGBUILD-git` and `.SRCINFO-git` generated version at the
   tag commit.
-- [ ] `packaging/flatpak/io.github.hjosugi.Yeet.yml` tag and its full, immutable
+- [x] `packaging/flatpak/io.github.hjosugi.Yeet.yml` tag and its full, immutable
   commit. The dependency set changed in this release — `async-channel` and its
   transitive crates are new — so `cargo-sources.json` is regenerated rather than
-  carried over.
-- [ ] The Nix expression consumes the repository `Cargo.lock` and has no
+  carried over. An isolated Flatpak Builder 1.4.9 build of the published tag
+  completed with Cargo in `--offline --locked` mode.
+- [x] The Nix expression consumes the repository `Cargo.lock` and has no
   release-source hash to recalculate; `flake.lock` pins nixpkgs and is not a
   Yeet release-version field.
-- [ ] The Scoop manifest in `bucket/yeet.json` is refreshed from the published
+- [x] The Scoop manifest in `bucket/yeet.json` is refreshed from the published
   portable ZIP checksum; the Scoop Excavator workflow verifies later updates.
-- [ ] `scripts/check-release-metadata.sh --tagged` matches the immutable tag,
+- [x] `scripts/check-release-metadata.sh --tagged` matches the immutable tag,
   source archive, Windows checksum file and Scoop manifest.
 
 Yeet is no longer submitted to winget; see the closed issue #44 and
