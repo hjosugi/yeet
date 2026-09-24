@@ -29,9 +29,18 @@ clean `PATH`, adds a real file so the shelf maps, and enumerates its native
 windows. The test requires one visible shelf and one visible edge strip per
 reported monitor; it checks their dimensions and requires `WS_EX_TOPMOST` plus
 `WS_EX_TOOLWINDOW`, with `WS_EX_NOACTIVATE` on every edge. This catches missing
-runtime files and regressions in the native topmost setup before release. It
-does not simulate Win+D, fullscreen transitions, display hotplug or an OLE drag,
-so the corresponding real-machine checks below still apply.
+runtime files and regressions in the native topmost setup before release.
+
+The same test then starts a second instance with `--hidden` and an empty shelf,
+and drives summon on drag through the exact event Yeet watches for: it creates
+a top-level window of class `SysDragImage` in its own process, requires the
+shelf to appear with its topmost tool-window styles and without any Yeet window
+becoming the foreground window, then destroys that window and requires the
+unused shelf to go away again. A top-level window of any other class must not
+reveal the shelf. This proves the event hook, the reveal and the put-back on a
+real Windows session. It does not simulate Win+D, fullscreen transitions,
+display hotplug or a real OLE drag from Explorer, a browser or Office, so the
+corresponding real-machine checks below still apply.
 
 The platform-neutral drag completion policy is covered by the library test
 suite on Windows and Linux. A cancelled drag or a drag with no accepted copy or

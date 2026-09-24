@@ -11,7 +11,7 @@ Esc や無効な場所への drop で item を失いません。ドラッグ開�
 
 ![2つのファイルを保持したYeetシェルフ](docs/screenshots/yeet-linux-dark.png)
 
-mainは **v0.7.0** を対象にしています。dragが画面端に届いてからではなく、dragを
+現在のreleaseは **v0.7.0** です。dragが画面端に届いてからではなく、dragを
 始めた時点でshelfを出すようになりました。0.6.1向けに書かれたfix——Windowsの起動で
 console windowが点滅する問題と、tray常駐中のpolling——も含みます。application、
 Cargo packageとも名前は単にYeetで、native Rust/GTK 4の単一codebaseです。v0.6では
