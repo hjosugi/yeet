@@ -11,8 +11,8 @@ leaves the shelf, it disappears.
 
 ![Yeet shelf holding two files](docs/screenshots/yeet-linux-dark.png)
 
-> Development status: **main is targeting v0.7.0**, which reveals the shelf as
-> soon as a drag starts rather than when it reaches the screen edge, and which
+> Development status: **v0.7.0 is the current release**. It reveals the shelf
+> as soon as a drag starts rather than when it reaches the screen edge, and it
 > carries the fixes first written for 0.6.1: a Windows launch that flashed
 > console windows, and the polling Yeet did while it sat in the tray. The
 > application and Cargo package are named simply Yeet and use one native

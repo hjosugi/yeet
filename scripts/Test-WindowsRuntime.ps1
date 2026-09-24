@@ -53,6 +53,75 @@ public static class YeetNativeWindow
 
     [DllImport("user32.dll")]
     public static extern int GetSystemMetrics(int index);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    public delegate IntPtr WindowProcedure(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct WindowClass
+    {
+        public uint Size;
+        public uint Style;
+        public WindowProcedure Procedure;
+        public int ClassExtra;
+        public int WindowExtra;
+        public IntPtr Instance;
+        public IntPtr Icon;
+        public IntPtr Cursor;
+        public IntPtr Background;
+        public string MenuName;
+        public string ClassName;
+        public IntPtr SmallIcon;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern ushort RegisterClassExW(ref WindowClass windowClass);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr CreateWindowExW(uint exStyle, string className, string name,
+        uint style, int x, int y, int width, int height, IntPtr parent, IntPtr menu,
+        IntPtr instance, IntPtr parameter);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool DestroyWindow(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr DefWindowProcW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr GetModuleHandleW(string name);
+
+    // Held in a static field so the collector never frees a procedure Windows still calls.
+    private static readonly WindowProcedure DefaultProcedure = DefWindowProcW;
+
+    // A hidden, never-activated top-level window of the given class, created by this process.
+    public static IntPtr CreateInertWindow(string className)
+    {
+        const int ClassAlreadyExists = 1410;
+        const uint WsExToolWindow = 0x00000080;
+        const uint WsExNoActivate = 0x08000000;
+        const uint WsPopup = 0x80000000;
+        var windowClass = new WindowClass
+        {
+            Size = (uint)Marshal.SizeOf(typeof(WindowClass)),
+            Procedure = DefaultProcedure,
+            Instance = GetModuleHandleW(null),
+            ClassName = className,
+        };
+        if (RegisterClassExW(ref windowClass) == 0 && Marshal.GetLastWin32Error() != ClassAlreadyExists)
+        {
+            throw new System.ComponentModel.Win32Exception();
+        }
+        IntPtr hwnd = CreateWindowExW(WsExToolWindow | WsExNoActivate, className, "", WsPopup,
+            0, 0, 1, 1, IntPtr.Zero, IntPtr.Zero, windowClass.Instance, IntPtr.Zero);
+        if (hwnd == IntPtr.Zero)
+        {
+            throw new System.ComponentModel.Win32Exception();
+        }
+        return hwnd;
+    }
 }
 '@
 
@@ -108,6 +177,87 @@ function Invoke-Toggle([string]$Path) {
     $toggle = Start-Process -FilePath $Path -ArgumentList "--toggle" -Wait -PassThru
     if ($toggle.ExitCode -ne 0) {
         throw "Forwarded --toggle exited with code $($toggle.ExitCode)."
+    }
+}
+
+function Test-ShelfVisible([uint32]$ProcessId) {
+    return @(
+        Get-ProcessWindows -ProcessId $ProcessId |
+            Where-Object { $_.Title -eq "Yeet" -and $_.Visible }
+    ).Count -gt 0
+}
+
+function Wait-EdgesReady([System.Diagnostics.Process]$Process, [int]$MonitorCount, [DateTime]$Deadline) {
+    do {
+        Start-Sleep -Milliseconds 250
+        $Process.Refresh()
+        if ($Process.HasExited) {
+            throw "yeet.exe exited early with code $($Process.ExitCode)."
+        }
+        $edges = @(
+            Get-ProcessWindows -ProcessId $Process.Id |
+                Where-Object { $_.Title -eq "Yeet edge" -and $_.Visible }
+        )
+        if ($edges.Count -eq $MonitorCount) {
+            return
+        }
+    } while ([DateTime]::UtcNow -lt $Deadline)
+    throw "Yeet did not map one edge per monitor before the timeout."
+}
+
+# Drive the drag-start trigger (#57) through the same event it watches for: a
+# top-level window of the shell drag helper's class appearing in, then leaving,
+# another process. This proves the hook, the reveal and the put-back on a real
+# Windows session; a real Explorer, browser or Office drag stays a manual check.
+function Test-DragSummon([string]$Path, [int]$MonitorCount) {
+    $env:APPDATA = Join-Path $profileRoot "DragRoaming"
+    $env:LOCALAPPDATA = Join-Path $profileRoot "DragLocal"
+    New-Item -ItemType Directory -Path $env:APPDATA, $env:LOCALAPPDATA -Force | Out-Null
+
+    $summoned = Start-Process -FilePath $Path -ArgumentList "--hidden" -PassThru
+    try {
+        Wait-EdgesReady $summoned $MonitorCount ([DateTime]::UtcNow.AddSeconds($TimeoutSeconds))
+        if (Test-ShelfVisible $summoned.Id) {
+            throw "An empty shelf started with --hidden is visible."
+        }
+
+        # Any other window appearing is not a drag.
+        $unrelated = [YeetNativeWindow]::CreateInertWindow("YeetRuntimeUnrelatedWindow")
+        Start-Sleep -Milliseconds 1500
+        [void][YeetNativeWindow]::DestroyWindow($unrelated)
+        if (Test-ShelfVisible $summoned.Id) {
+            throw "An unrelated top-level window revealed the shelf."
+        }
+
+        $yeetWindows = @(Get-ProcessWindows -ProcessId $summoned.Id | ForEach-Object Handle)
+        $dragImage = [YeetNativeWindow]::CreateInertWindow("SysDragImage")
+        try {
+            $shelf = Wait-ShelfVisibility -ProcessId $summoned.Id -Visible $true `
+                -Deadline ([DateTime]::UtcNow.AddSeconds($TimeoutSeconds))
+            Assert-Style $shelf $WsExTopmost "WS_EX_TOPMOST when revealed by a drag"
+            Assert-Style $shelf $WsExToolWindow "WS_EX_TOOLWINDOW when revealed by a drag"
+            # The drag's source keeps the keyboard focus: the reveal must not activate Yeet.
+            $foreground = [YeetNativeWindow]::GetForegroundWindow()
+            $yeetWindows += @(Get-ProcessWindows -ProcessId $summoned.Id | ForEach-Object Handle)
+            if ($yeetWindows -contains $foreground) {
+                throw "Revealing the shelf for a drag made a Yeet window the foreground window."
+            }
+        }
+        finally {
+            [void][YeetNativeWindow]::DestroyWindow($dragImage)
+        }
+
+        # Nothing was dropped, so the shelf that came out for the drag goes away with it.
+        [void](Wait-ShelfVisibility -ProcessId $summoned.Id -Visible $false `
+            -Deadline ([DateTime]::UtcNow.AddSeconds($TimeoutSeconds)))
+        Write-Host "Verified a drag-image window reveals the hidden shelf without activating it, and its end puts the unused shelf back."
+    }
+    finally {
+        $summoned.Refresh()
+        if (-not $summoned.HasExited) {
+            Stop-Process -Id $summoned.Id -Force
+            $summoned.WaitForExit()
+        }
     }
 }
 
@@ -221,6 +371,11 @@ try {
     Write-Host "Verified shelf HWND: $($shelf.Width)x$($shelf.Height), style $shelfStyle."
     Write-Host "Verified $($edges.Count) topmost, no-activate edge HWND(s) for $monitorCount monitor(s)."
     Write-Host "Verified forwarded hide/show preserves the shelf's native topmost styles."
+
+    # One Yeet per session: stop this one before starting the drag-summon instance.
+    Stop-Process -Id $process.Id -Force
+    $process.WaitForExit()
+    Test-DragSummon $executablePath $monitorCount
 }
 finally {
     if ($null -ne $process) {
