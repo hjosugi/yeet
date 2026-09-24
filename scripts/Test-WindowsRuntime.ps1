@@ -16,6 +16,7 @@ Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 public static class YeetNativeWindow
 {
@@ -57,10 +58,31 @@ public static class YeetNativeWindow
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
 
-    public delegate IntPtr WindowProcedure(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeoutW(IntPtr hwnd, uint message, IntPtr wParam,
+        IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+
+    // Whether the window's thread handles a message within two seconds.
+    public static bool Responds(IntPtr hwnd)
+    {
+        const uint WmNull = 0x0000;
+        const uint SmtoAbortIfHung = 0x0002;
+        IntPtr result;
+        return SendMessageTimeoutW(hwnd, WmNull, IntPtr.Zero, IntPtr.Zero, SmtoAbortIfHung, 2000,
+            out result) != IntPtr.Zero;
+    }
+}
+
+// A hidden, never-activated top-level window of a given class, owned by a
+// thread of this process that pumps messages, as every real application's
+// windows are. A window on a thread that never reads its queue would hang
+// any program that sends it a message, which is not what a drag looks like.
+public sealed class YeetInertWindow : IDisposable
+{
+    private delegate IntPtr WindowProcedure(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct WindowClass
+    private struct WindowClass
     {
         public uint Size;
         public uint Style;
@@ -76,51 +98,121 @@ public static class YeetNativeWindow
         public IntPtr SmallIcon;
     }
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern ushort RegisterClassExW(ref WindowClass windowClass);
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Message
+    {
+        public IntPtr Window;
+        public uint Id;
+        public IntPtr WParam;
+        public IntPtr LParam;
+        public uint Time;
+        public int X;
+        public int Y;
+    }
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern IntPtr CreateWindowExW(uint exStyle, string className, string name,
+    private static extern ushort RegisterClassExW(ref WindowClass windowClass);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateWindowExW(uint exStyle, string className, string name,
         uint style, int x, int y, int width, int height, IntPtr parent, IntPtr menu,
         IntPtr instance, IntPtr parameter);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool DestroyWindow(IntPtr hwnd);
+    [DllImport("user32.dll")]
+    private static extern IntPtr DefWindowProcW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
-    public static extern IntPtr DefWindowProcW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+    private static extern int GetMessageW(out Message message, IntPtr hwnd, uint first, uint last);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr DispatchMessageW(ref Message message);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool PostMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr hwnd);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
-    public static extern IntPtr GetModuleHandleW(string name);
+    private static extern IntPtr GetModuleHandleW(string name);
+
+    private const uint WmClose = 0x0010;
 
     // Held in a static field so the collector never frees a procedure Windows still calls.
     private static readonly WindowProcedure DefaultProcedure = DefWindowProcW;
 
-    // A hidden, never-activated top-level window of the given class, created by this process.
-    public static IntPtr CreateInertWindow(string className)
+    private readonly Thread thread;
+    private readonly ManualResetEventSlim created = new ManualResetEventSlim();
+    private Exception failure;
+
+    public IntPtr Handle { get; private set; }
+
+    public YeetInertWindow(string className)
+    {
+        thread = new Thread(() => Run(className)) { IsBackground = true };
+        thread.Start();
+        created.Wait();
+        if (failure != null)
+        {
+            throw failure;
+        }
+    }
+
+    private void Run(string className)
     {
         const int ClassAlreadyExists = 1410;
         const uint WsExToolWindow = 0x00000080;
         const uint WsExNoActivate = 0x08000000;
         const uint WsPopup = 0x80000000;
-        var windowClass = new WindowClass
+        try
         {
-            Size = (uint)Marshal.SizeOf(typeof(WindowClass)),
-            Procedure = DefaultProcedure,
-            Instance = GetModuleHandleW(null),
-            ClassName = className,
-        };
-        if (RegisterClassExW(ref windowClass) == 0 && Marshal.GetLastWin32Error() != ClassAlreadyExists)
+            var windowClass = new WindowClass
+            {
+                Size = (uint)Marshal.SizeOf(typeof(WindowClass)),
+                Procedure = DefaultProcedure,
+                Instance = GetModuleHandleW(null),
+                ClassName = className,
+            };
+            if (RegisterClassExW(ref windowClass) == 0 && Marshal.GetLastWin32Error() != ClassAlreadyExists)
+            {
+                throw new System.ComponentModel.Win32Exception();
+            }
+            Handle = CreateWindowExW(WsExToolWindow | WsExNoActivate, className, "", WsPopup,
+                0, 0, 1, 1, IntPtr.Zero, IntPtr.Zero, windowClass.Instance, IntPtr.Zero);
+            if (Handle == IntPtr.Zero)
+            {
+                throw new System.ComponentModel.Win32Exception();
+            }
+        }
+        catch (Exception error)
+        {
+            failure = error;
+            return;
+        }
+        finally
+        {
+            created.Set();
+        }
+
+        // WM_CLOSE reaches DefWindowProc, which destroys the window on this,
+        // its own, thread; the loop ends with it.
+        Message message;
+        while (IsWindow(Handle) && GetMessageW(out message, IntPtr.Zero, 0, 0) > 0)
+        {
+            DispatchMessageW(ref message);
+        }
+    }
+
+    public void Dispose()
+    {
+        if (!PostMessageW(Handle, WmClose, IntPtr.Zero, IntPtr.Zero))
         {
             throw new System.ComponentModel.Win32Exception();
         }
-        IntPtr hwnd = CreateWindowExW(WsExToolWindow | WsExNoActivate, className, "", WsPopup,
-            0, 0, 1, 1, IntPtr.Zero, IntPtr.Zero, windowClass.Instance, IntPtr.Zero);
-        if (hwnd == IntPtr.Zero)
+        if (!thread.Join(TimeSpan.FromSeconds(10)) || IsWindow(Handle))
         {
-            throw new System.ComponentModel.Win32Exception();
+            throw new TimeoutException("The inert test window was not destroyed.");
         }
-        return hwnd;
     }
 }
 '@
@@ -222,15 +314,15 @@ function Test-DragSummon([string]$Path, [int]$MonitorCount) {
         }
 
         # Any other window appearing is not a drag.
-        $unrelated = [YeetNativeWindow]::CreateInertWindow("YeetRuntimeUnrelatedWindow")
+        $unrelated = [YeetInertWindow]::new("YeetRuntimeUnrelatedWindow")
         Start-Sleep -Milliseconds 1500
-        [void][YeetNativeWindow]::DestroyWindow($unrelated)
+        $unrelated.Dispose()
         if (Test-ShelfVisible $summoned.Id) {
             throw "An unrelated top-level window revealed the shelf."
         }
 
         $yeetWindows = @(Get-ProcessWindows -ProcessId $summoned.Id | ForEach-Object Handle)
-        $dragImage = [YeetNativeWindow]::CreateInertWindow("SysDragImage")
+        $dragImage = [YeetInertWindow]::new("SysDragImage")
         try {
             $shelf = Wait-ShelfVisibility -ProcessId $summoned.Id -Visible $true `
                 -Deadline ([DateTime]::UtcNow.AddSeconds($TimeoutSeconds))
@@ -244,12 +336,20 @@ function Test-DragSummon([string]$Path, [int]$MonitorCount) {
             }
         }
         finally {
-            [void][YeetNativeWindow]::DestroyWindow($dragImage)
+            $dragImage.Dispose()
         }
 
         # Nothing was dropped, so the shelf that came out for the drag goes away with it.
-        [void](Wait-ShelfVisibility -ProcessId $summoned.Id -Visible $false `
-            -Deadline ([DateTime]::UtcNow.AddSeconds($TimeoutSeconds)))
+        try {
+            [void](Wait-ShelfVisibility -ProcessId $summoned.Id -Visible $false `
+                -Deadline ([DateTime]::UtcNow.AddSeconds($TimeoutSeconds)))
+        }
+        catch {
+            $state = Get-ProcessWindows -ProcessId $summoned.Id | ForEach-Object {
+                "'$($_.Title)' visible=$($_.Visible) responds=$([YeetNativeWindow]::Responds($_.Handle))"
+            }
+            throw "The shelf revealed for a drag stayed up after the drag ended. Yeet windows: $($state -join '; ')"
+        }
         Write-Host "Verified a drag-image window reveals the hidden shelf without activating it, and its end puts the unused shelf back."
     }
     finally {
