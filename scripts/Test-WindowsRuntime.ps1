@@ -302,11 +302,10 @@ function Wait-EdgesReady([System.Diagnostics.Process]$Process, [int]$MonitorCoun
 # another process. This proves the hook, the reveal and the put-back on a real
 # Windows session; a real Explorer, browser or Office drag stays a manual check.
 function Test-DragSummon([string]$Path, [int]$MonitorCount) {
-    $env:APPDATA = Join-Path $profileRoot "DragRoaming"
-    $env:LOCALAPPDATA = Join-Path $profileRoot "DragLocal"
-    New-Item -ItemType Directory -Path $env:APPDATA, $env:LOCALAPPDATA -Force | Out-Null
-
-    $summoned = Start-Process -FilePath $Path -ArgumentList "--hidden" -PassThru
+    # Yeet finds its data through the known-folder API, which does not read
+    # APPDATA or LOCALAPPDATA, so the first check's file is still on the shelf.
+    # A drag leaves a shelf with items where it is, so start from an empty one.
+    $summoned = Start-Process -FilePath $Path -ArgumentList "--hidden", "--clear" -PassThru
     try {
         Wait-EdgesReady $summoned $MonitorCount ([DateTime]::UtcNow.AddSeconds($TimeoutSeconds))
         if (Test-ShelfVisible $summoned.Id) {
