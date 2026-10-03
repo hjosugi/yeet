@@ -1,3 +1,5 @@
+use crate::atomic_file::write_atomic;
+use crate::uri::is_web_uri;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -44,6 +46,14 @@ pub struct AddReport {
 }
 
 impl AddReport {
+    /// A report for a single managed item that either was or was not added.
+    pub fn for_added(added: bool) -> Self {
+        Self {
+            added: usize::from(added),
+            ..Self::default()
+        }
+    }
+
     pub fn merge(&mut self, other: Self) {
         self.added += other.added;
         self.rejected += other.rejected;
@@ -275,15 +285,9 @@ impl ShelfModel {
         if text.trim().is_empty() {
             return Ok(false);
         }
-        let base = self
-            .state_path
-            .as_ref()
-            .and_then(|path| path.parent())
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| std::env::temp_dir().join("yeet"));
-        let snippets = base.join("snippets");
-        fs::create_dir_all(&snippets)?;
-        let path = snippets.join(format!("snippet-{}.txt", Uuid::new_v4()));
+        let path = self
+            .snippets_dir()?
+            .join(format!("snippet-{}.txt", Uuid::new_v4()));
         fs::write(&path, text)?;
         let name = text
             .lines()
@@ -307,6 +311,19 @@ impl ShelfModel {
     }
 
     pub fn managed_path(&self, extension: &str) -> io::Result<PathBuf> {
+        Ok(self.snippets_dir()?.join(format!(
+            "snippet-{}.{}",
+            Uuid::new_v4(),
+            extension.trim_start_matches('.')
+        )))
+    }
+
+    /// The directory managed snippets are written to, created on demand.
+    ///
+    /// It lives beside the shelf state so removing an item can delete its
+    /// backing file, and falls back to the temporary directory when there is
+    /// no persistent state path at all.
+    fn snippets_dir(&self) -> io::Result<PathBuf> {
         let base = self
             .state_path
             .as_ref()
@@ -315,11 +332,7 @@ impl ShelfModel {
             .unwrap_or_else(|| std::env::temp_dir().join("yeet"));
         let snippets = base.join("snippets");
         fs::create_dir_all(&snippets)?;
-        Ok(snippets.join(format!(
-            "snippet-{}.{}",
-            Uuid::new_v4(),
-            extension.trim_start_matches('.')
-        )))
+        Ok(snippets)
     }
 
     pub fn add_managed_path(&mut self, path: PathBuf, name: String) -> io::Result<bool> {
@@ -417,26 +430,9 @@ impl ShelfModel {
         let Some(path) = &self.state_path else {
             return Ok(());
         };
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let temporary = path.with_extension("json.tmp");
         let data = serde_json::to_vec_pretty(&self.items).map_err(io::Error::other)?;
-        fs::write(&temporary, data)?;
-        #[cfg(windows)]
-        if path.exists() {
-            fs::remove_file(path)?;
-        }
-        fs::rename(temporary, path)
+        write_atomic(path, &data)
     }
-}
-
-fn is_web_uri(uri: &str) -> bool {
-    uri.get(..7)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
-        || uri
-            .get(..8)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
 }
 
 fn remote_uri_matches(item: &ShelfItem, uri: &str) -> bool {
@@ -506,6 +502,13 @@ fn ensure_unique_ids(items: &mut [ShelfItem]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_single_managed_item_reports_whether_it_was_added() {
+        assert_eq!(AddReport::for_added(true).added, 1);
+        assert_eq!(AddReport::for_added(false).added, 0);
+        assert!(AddReport::for_added(false).added_ids.is_empty());
+    }
 
     #[test]
     fn add_rejects_missing_and_duplicate_paths() {
