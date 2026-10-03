@@ -32,6 +32,19 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.2" date="2026-10-03">
+      <description>
+        <p>Fixes the shelf rendering fully transparent on sessions whose GTK
+        theme does not define the libadwaita colour names the stylesheet used:
+        the window now paints its background and the empty shelf shows its
+        "Drop files or text here" hint instead of a blank panel.</p>
+        <p>The Shelf opacity setting now reaches the whole shelf, including the
+        drop area, and defaults to a slight 90% translucency.</p>
+        <p>Reduces the shelf chrome: no wordmark or backend label, a smaller
+        move grip, and every action button collected in the footer with the
+        item count.</p>
+      </description>
+    </release>
     <release version="0.7.1" date="2026-10-03">
       <description>
         <p>Internal cleanup release with no behaviour change: duplicated state
