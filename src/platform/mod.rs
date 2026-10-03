@@ -409,6 +409,57 @@ pub fn manual_shelf_position() -> Option<(i32, i32)> {
     })
 }
 
+// The monitor a drag or edge reveal asked the shelf to appear on.
+//
+// Kept as the monitor itself, not a flag, because the first reveal happens
+// before the shelf has an X window: the placement has to survive until the
+// window is mapped, and the map handler then uses this instead of whichever
+// monitor the compositor happened to put the window on.
+thread_local! {
+    static REVEAL_MONITOR: std::cell::RefCell<Option<gdk::Monitor>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub fn set_reveal_monitor(monitor: Option<gdk::Monitor>) {
+    REVEAL_MONITOR.with(|cell| *cell.borrow_mut() = monitor);
+}
+
+pub fn reveal_monitor() -> Option<gdk::Monitor> {
+    REVEAL_MONITOR.with(|cell| cell.borrow().clone())
+}
+
+/// The monitor under the pointer, if the session can report it.
+///
+/// Used to reveal the shelf on the monitor a drag is actually happening on
+/// instead of on whichever monitor is current. `None` leaves placement to the
+/// backend's default.
+#[cfg(target_os = "linux")]
+pub fn monitor_at_pointer() -> Option<gdk::Monitor> {
+    if shelf_backend() == ShelfBackend::X11 {
+        return x11::monitor_at_pointer().or_else(gdk_monitor_at_pointer);
+    }
+    gdk_monitor_at_pointer()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn monitor_at_pointer() -> Option<gdk::Monitor> {
+    gdk_monitor_at_pointer()
+}
+
+/// The surface the pointer is over, through GDK.
+///
+/// Enough on Windows and on Wayland; the X11 backend prefers its own query
+/// because on GNOME the pointer is often over a native Wayland window that
+/// XWayland does not expose as a surface.
+fn gdk_monitor_at_pointer() -> Option<gdk::Monitor> {
+    use gtk::prelude::*;
+
+    let display = gdk::Display::default()?;
+    let pointer = display.default_seat()?.pointer()?;
+    let (surface, _, _) = pointer.surface_at_position();
+    display.monitor_at_surface(&surface?)
+}
+
 /// Whether the user can drag the shelf somewhere and have it reappear there.
 ///
 /// True only where Yeet places its own windows. Under `wlr_layer_shell_v1` the
@@ -691,6 +742,7 @@ pub fn set_shelf_monitor(
 ) {
     use gtk4_layer_shell::LayerShell;
 
+    set_reveal_monitor(Some(monitor.clone()));
     if shelf_backend() == ShelfBackend::X11 {
         use glib::object::Cast;
 
@@ -790,6 +842,7 @@ pub fn set_shelf_monitor(
     monitor: &gdk::Monitor,
     edge: ScreenEdge,
 ) {
+    set_reveal_monitor(Some(monitor.clone()));
     win32::move_shelf_to_monitor(window, monitor, edge);
 }
 

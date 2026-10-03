@@ -252,13 +252,23 @@ pub fn place_shelf(window: &gtk::Window, monitor: &gdk::Monitor, edge: ScreenEdg
                 (area_height - SHELF_VERTICAL_INSET * scale).min(SHELF_MAX_HEIGHT * scale),
             ),
         };
-        let (x, y) = match super::manual_shelf_position() {
-            // Clamped so a position saved on a monitor that is no longer
-            // attached cannot strand the shelf off-screen.
-            Some((x, y)) => (
-                x.clamp(area_x, (area_x + area_width - width).max(area_x)),
-                y.clamp(area_y, (area_y + area_height - height).max(area_y)),
-            ),
+        let manual = if super::reveal_monitor().is_some() {
+            None
+        } else {
+            super::manual_shelf_position()
+        };
+        let (x, y) = match manual {
+            // Placed on the monitor the saved position is on rather than the
+            // one the window happens to sit on, and clamped inside it so a
+            // position from a detached monitor cannot strand the shelf.
+            Some((x, y)) => {
+                let target = monitor_containing(x, y).unwrap_or_else(|| monitor.clone());
+                let (mx, my, mw, mh, _) = device_area(&target);
+                (
+                    x.clamp(mx, (mx + mw - width).max(mx)),
+                    y.clamp(my, (my + mh - height).max(my)),
+                )
+            }
             None => {
                 let x = if edge == ScreenEdge::Right {
                     area_x + area_width - width - SHELF_MARGIN * scale
@@ -295,6 +305,12 @@ pub fn current_position(window: &gtk::Window) -> Option<(i32, i32)> {
 }
 
 pub fn place_shelf_on_current_monitor(window: &gtk::Window, edge: ScreenEdge) {
+    // A reveal named its monitor before the shelf had a window; honour it now
+    // that there is something to place.
+    if let Some(monitor) = super::reveal_monitor() {
+        place_shelf(window, &monitor, edge);
+        return;
+    }
     if let Some(monitor) = current_monitor(window) {
         place_shelf(window, &monitor, edge);
     }
@@ -309,6 +325,45 @@ fn current_monitor(window: &gtk::Window) -> Option<gdk::Monitor> {
             .item(0)
             .and_then(|item| item.downcast::<gdk::Monitor>().ok())
     })
+}
+
+/// The monitor the pointer is currently over.
+///
+/// Read from the X server rather than GDK: on GNOME the pointer is often over
+/// a native Wayland window that XWayland does not expose as a surface, so
+/// `gdk_device_get_surface_at_position` answers nothing.
+pub fn monitor_at_pointer() -> Option<gdk::Monitor> {
+    let (x, y) = with_session(|session| {
+        let pointer = session
+            .connection
+            .query_pointer(session.root)
+            .ok()?
+            .reply()
+            .ok()?;
+        Some((i32::from(pointer.root_x), i32::from(pointer.root_y)))
+    })
+    .flatten()?;
+    monitor_containing(x, y)
+}
+
+/// The monitor whose device-pixel area contains a root-window point.
+fn monitor_containing(x: i32, y: i32) -> Option<gdk::Monitor> {
+    let display = gdk::Display::default()?;
+    let monitors = display.monitors();
+    for index in 0..monitors.n_items() {
+        let Some(monitor) = monitors
+            .item(index)
+            .and_then(|item| item.downcast::<gdk::Monitor>().ok())
+        else {
+            continue;
+        };
+        let (area_x, area_y, area_width, area_height, _) = device_area(&monitor);
+        if (area_x..area_x + area_width).contains(&x) && (area_y..area_y + area_height).contains(&y)
+        {
+            return Some(monitor);
+        }
+    }
+    None
 }
 
 pub fn configure_edge(

@@ -264,7 +264,12 @@ fn apply(
     };
     // A strip is always anchored; only the shelf follows a position the user
     // dragged it to, clamped so a stale position cannot land it off-screen.
-    let manual = (!edge).then(super::manual_shelf_position).flatten();
+    // A drag or edge reveal names a monitor, so it ignores that position.
+    let manual = if super::reveal_monitor().is_some() {
+        None
+    } else {
+        (!edge).then(super::manual_shelf_position).flatten()
+    };
     let (x, y) = match manual {
         Some((x, y)) => (
             x.clamp(geometry.x(), geometry.x() + geometry.width() - width),

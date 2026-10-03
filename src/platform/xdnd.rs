@@ -226,6 +226,10 @@ mod tests {
     /// Take ownership of `TEST_SELECTION`, which is exactly what a drag source
     /// does to `XdndSelection` when a drag begins.
     fn claim_test_selection() -> Option<(RustConnection, u32)> {
+        claim_selection(TEST_SELECTION)
+    }
+
+    fn claim_selection(name: &str) -> Option<(RustConnection, u32)> {
         let (connection, screen) = x11rb::connect(None).ok()?;
         let root = connection.setup().roots.get(screen)?.root;
         let window = connection.generate_id().ok()?;
@@ -247,7 +251,7 @@ mod tests {
             .check()
             .ok()?;
         let selection = connection
-            .intern_atom(false, TEST_SELECTION.as_bytes())
+            .intern_atom(false, name.as_bytes())
             .ok()?
             .reply()
             .ok()?
@@ -259,6 +263,17 @@ mod tests {
             .ok()?;
         connection.flush().ok()?;
         Some((connection, window))
+    }
+
+    /// Manual check: claim the real `XdndSelection` so a running Yeet reveals
+    /// its shelf. Ignored so it never runs in CI.
+    #[test]
+    #[ignore = "manual: needs a running Yeet to observe the reveal"]
+    fn claim_real_xdnd_selection_for_manual_check() {
+        let Some((_connection, _window)) = claim_selection(XDND_SELECTION) else {
+            return;
+        };
+        thread::sleep(Duration::from_secs(5));
     }
 
     /// The whole mechanism against a real X server: a new selection owner is
