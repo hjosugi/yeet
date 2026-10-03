@@ -32,6 +32,15 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.1" date="2026-10-03">
+      <description>
+        <p>Internal cleanup release with no behaviour change: duplicated state
+        writing, URI recognition, hotkey rendering and shelf-item lookups were
+        folded into single shared helpers, so the model, settings and UI code
+        are smaller and less able to drift apart. All release artifacts are
+        rebuilt from the same source as 0.7.0.</p>
+      </description>
+    </release>
     <release version="0.7.0" date="2026-08-27">
       <description>
         <p>The shelf now comes out as soon as a drag begins anywhere on the

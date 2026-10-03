@@ -1,10 +1,10 @@
 # Release metadata checklist
 
-The source tree targets Yeet 0.7.0. Metadata that does not depend on the final
+The source tree targets Yeet 0.7.1. Metadata that does not depend on the final
 tag is updated before tagging and is checked by `cargo metadata` and AppStream
 validation.
 
-## Complete before tagging v0.7.0
+## Complete before tagging v0.7.1
 
 - [x] Cargo package and lockfile package version, including the `xtask` and
   `yeetup` workspace members
@@ -14,26 +14,24 @@ validation.
 - [x] English and Japanese install examples, including the AppImage and
   `yeetup` download names, which embed the version
 
-## Complete after tagging v0.7.0
+## Complete after tagging v0.7.1
 
 These depend on the final tag and must be calculated from that release's
 artifacts, not guessed or copied from an earlier release:
 
-- [x] `packaging/arch/PKGBUILD` source-archive SHA-256 for `v0.7.0.tar.gz`, then
+- [ ] `packaging/arch/PKGBUILD` source-archive SHA-256 for `v0.7.1.tar.gz`, then
   regenerate `.SRCINFO` from it.
-- [x] `packaging/arch/PKGBUILD-git` and `.SRCINFO-git` generated version at the
+- [ ] `packaging/arch/PKGBUILD-git` and `.SRCINFO-git` generated version at the
   tag commit.
-- [x] `packaging/flatpak/io.github.hjosugi.Yeet.yml` tag and its full, immutable
-  commit. The dependency set changed in this release — `async-channel` and its
-  transitive crates are new — so `cargo-sources.json` is regenerated rather than
-  carried over. An isolated Flatpak Builder 1.4.9 build of the published tag
-  completed with Cargo in `--offline --locked` mode.
+- [ ] `packaging/flatpak/io.github.hjosugi.Yeet.yml` tag and its full, immutable
+  commit. The dependency set is unchanged from 0.7.0, so `cargo-sources.json` is
+  carried over rather than regenerated.
 - [x] The Nix expression consumes the repository `Cargo.lock` and has no
   release-source hash to recalculate; `flake.lock` pins nixpkgs and is not a
   Yeet release-version field.
-- [x] The Scoop manifest in `bucket/yeet.json` is refreshed from the published
+- [ ] The Scoop manifest in `bucket/yeet.json` is refreshed from the published
   portable ZIP checksum; the Scoop Excavator workflow verifies later updates.
-- [x] `scripts/check-release-metadata.sh --tagged` matches the immutable tag,
+- [ ] `scripts/check-release-metadata.sh --tagged` matches the immutable tag,
   source archive, Windows checksum file and Scoop manifest.
 
 Yeet is no longer submitted to winget; see the closed issue #44 and
