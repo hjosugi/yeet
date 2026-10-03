@@ -430,7 +430,10 @@ impl Ui {
                     return;
                 }
                 self.summoned_by_drag.set(true);
-                self.show(None);
+                // Yoink reveals the shelf on the monitor the drag is happening
+                // on, not on whichever monitor the shelf was last placed.
+                let monitor = platform::monitor_at_pointer();
+                self.show(monitor.as_ref());
             }
             platform::DragPhase::End => {
                 if !self.summoned_by_drag.get() {
@@ -820,8 +823,13 @@ impl Ui {
     }
 
     fn show(self: &Rc<Self>, monitor: Option<&gdk::Monitor>) {
-        if let Some(monitor) = monitor {
-            platform::set_shelf_monitor(&self.shelf, monitor, self.settings.borrow().edge);
+        match monitor {
+            Some(monitor) => {
+                platform::set_shelf_monitor(&self.shelf, monitor, self.settings.borrow().edge)
+            }
+            // Opened deliberately, so the shelf keeps the position the user
+            // dragged it to instead of a monitor a drag happened to name.
+            None => platform::set_reveal_monitor(None),
         }
         self.shelf_shown.set(true);
         if platform::uses_premapped_shelf() {
@@ -882,6 +890,11 @@ impl Ui {
         if !self.shelf_moved.get() {
             return;
         }
+        // A drag or edge reveal places the shelf on a monitor of its own; that
+        // is not a position the user chose, so it must not overwrite one.
+        if platform::reveal_monitor().is_some() {
+            return;
+        }
         let Some((x, y)) = platform::current_shelf_position(&self.shelf) else {
             return;
         };
@@ -898,6 +911,7 @@ impl Ui {
         self.shelf_moved.set(false);
         self.settings.borrow_mut().shelf_position = None;
         platform::set_manual_shelf_position(None);
+        platform::set_reveal_monitor(None);
         self.update_position_sampler();
         self.save_settings();
         platform::update_shelf_placement(&self.shelf, self.settings.borrow().edge);
