@@ -32,6 +32,17 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.3" date="2026-10-03">
+      <description>
+        <p>Reveals the shelf on the monitor the drag is actually happening on,
+        like Yoink, instead of on whichever monitor it was last placed. A shelf
+        moved on one monitor still returns to that monitor when opened from the
+        shortcut or the command line.</p>
+        <p>An empty shelf appears for the duration of the drag and steps away
+        when the drag ends with nothing dropped; removing or dragging out the
+        last item hides it.</p>
+      </description>
+    </release>
     <release version="0.7.2" date="2026-10-03">
       <description>
         <p>Fixes the shelf rendering fully transparent on sessions whose GTK
