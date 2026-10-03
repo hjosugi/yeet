@@ -20,7 +20,7 @@ pub const SHELF_WIDTH: i32 = 400;
 ///
 /// The floor is well above zero on purpose: a shelf you cannot see is a shelf
 /// you cannot drop onto, and the window has no decorations to fall back on.
-pub const DEFAULT_SHELF_OPACITY: u8 = 96;
+pub const DEFAULT_SHELF_OPACITY: u8 = 90;
 pub const MIN_SHELF_OPACITY: u8 = 20;
 pub const MAX_SHELF_OPACITY: u8 = 100;
 

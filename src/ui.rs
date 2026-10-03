@@ -37,7 +37,6 @@ pub struct Ui {
     list: gtk::ListBox,
     count: gtk::Label,
     empty: gtk::Label,
-    mode_label: gtk::Label,
     hide_button: gtk::Button,
     clear_button: gtk::Button,
     clipboard_button: gtk::Button,
@@ -109,7 +108,7 @@ impl Ui {
             .application(app)
             .title("Yeet")
             .default_width(SHELF_WIDTH)
-            .default_height(520)
+            .default_height(360)
             .decorated(false)
             .resizable(true)
             .build();
@@ -139,7 +138,7 @@ impl Ui {
         // the whole stack: without a separate target there would be no way to
         // tell "move the shelf" from "drag every item out of it".
         let grip = gtk::Image::from_icon_name("list-drag-handle-symbolic");
-        grip.set_pixel_size(16);
+        grip.set_pixel_size(12);
         grip.add_css_class("dim-label");
         let move_handle = gtk::WindowHandle::builder()
             .child(&grip)
@@ -149,23 +148,18 @@ impl Ui {
         move_handle.set_accessible_role(gtk::AccessibleRole::Button);
         move_handle.update_property(&[gtk::accessible::Property::Label(tr("move_shelf"))]);
 
-        let stack_icon = gtk::Image::from_icon_name("view-grid-symbolic");
-        stack_icon.set_pixel_size(20);
-        let title = gtk::Label::new(Some("YEET"));
-        title.add_css_class("title");
-        title.set_hexpand(true);
-        title.set_halign(gtk::Align::Start);
         let count = gtk::Label::new(Some("0"));
         count.add_css_class("dim-label");
+        count.set_hexpand(true);
+        count.set_halign(gtk::Align::Start);
         count.set_accessible_role(gtk::AccessibleRole::Status);
         count.update_property(&[gtk::accessible::Property::Label("0 items on the shelf")]);
         let hide = gtk::Button::from_icon_name("window-minimize-symbolic");
         hide.add_css_class("flat");
         set_button_accessibility(&hide, tr("hide_shelf"), "Escape");
+        // The header is only the move handle; every action button lives in the
+        // footer so the shelf has a single row of icons.
         header.append(&move_handle);
-        header.append(&stack_icon);
-        header.append(&title);
-        header.append(&hide);
         outer.append(&header);
 
         let list = gtk::ListBox::new();
@@ -181,8 +175,8 @@ impl Ui {
         list.add_css_class("boxed-list");
         let empty = gtk::Label::new(Some(tr("drop_here")));
         empty.update_property(&[gtk::accessible::Property::Label(tr("empty_help"))]);
-        empty.set_margin_top(60);
-        empty.set_margin_bottom(60);
+        empty.set_margin_top(24);
+        empty.set_margin_bottom(24);
         list.set_placeholder(Some(&empty));
         let scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -194,10 +188,6 @@ impl Ui {
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         footer.set_accessible_role(gtk::AccessibleRole::Toolbar);
         footer.update_property(&[gtk::accessible::Property::Label(tr("shelf_actions"))]);
-        let mode_label = gtk::Label::new(Some(mode_label_text()));
-        mode_label.add_css_class("dim-label");
-        mode_label.set_hexpand(true);
-        mode_label.set_halign(gtk::Align::Start);
         let clear = gtk::Button::from_icon_name("edit-clear-all-symbolic");
         clear.add_css_class("flat");
         clear.set_tooltip_text(Some(tr("clear_unpinned")));
@@ -211,8 +201,8 @@ impl Ui {
         preferences.add_css_class("flat");
         preferences.set_tooltip_text(Some(tr("settings")));
         set_button_accessibility(&preferences, tr("settings"), "");
-        footer.append(&mode_label);
         footer.append(&count);
+        footer.append(&hide);
         footer.append(&clipboard);
         footer.append(&preferences);
         footer.append(&clear);
@@ -253,7 +243,6 @@ impl Ui {
             list,
             count,
             empty: empty.clone(),
-            mode_label: mode_label.clone(),
             hide_button: hide.clone(),
             clear_button: clear.clone(),
             clipboard_button: clipboard.clone(),
@@ -676,8 +665,15 @@ impl Ui {
 
     fn refresh(self: &Rc<Self>) {
         let focused_id = self.focused_id();
-        while let Some(child) = self.list.first_child() {
-            self.list.remove(&child);
+        // Remove only the rows, not the placeholder widget `set_placeholder`
+        // installed: iterating every child would delete it on the first
+        // refresh and leave the empty shelf blank.
+        let mut child = self.list.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            if widget.is::<gtk::ListBoxRow>() {
+                self.list.remove(&widget);
+            }
         }
         let items = self.model.borrow().items().to_vec();
         let selected_snapshot = self.selected.borrow().clone();
@@ -1276,7 +1272,6 @@ impl Ui {
         self.empty.set_text(tr("drop_here"));
         self.empty
             .update_property(&[gtk::accessible::Property::Label(tr("empty_help"))]);
-        self.mode_label.set_text(mode_label_text());
         self.clear_button
             .set_tooltip_text(Some(tr("clear_unpinned")));
         self.clipboard_button
@@ -1671,17 +1666,6 @@ impl Ui {
         for edge in self.edges.borrow().iter() {
             platform::refresh_window_theme(edge);
         }
-    }
-}
-
-/// The backend name shown in the shelf footer.
-fn mode_label_text() -> &'static str {
-    if platform::layer_shell_supported() {
-        tr("wayland_mode")
-    } else if cfg!(target_os = "windows") {
-        tr("windows_mode")
-    } else {
-        tr("fallback_mode")
     }
 }
 
@@ -2566,7 +2550,7 @@ fn apply_shelf_opacity(percent: u8) {
     let alpha = f64::from(percent.clamp(MIN_SHELF_OPACITY, MAX_SHELF_OPACITY)) / 100.0;
     SHELF_BACKGROUND.with(|background| {
         background.load_from_data(&format!(
-            ".yeet-shelf {{ background: alpha(@window_bg_color, {alpha}); }}"
+            ".yeet-shelf {{ background: alpha(@theme_bg_color, {alpha}); }}"
         ));
     });
 }
@@ -2574,11 +2558,12 @@ fn apply_shelf_opacity(percent: u8) {
 fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_data(
-        ".yeet-shelf { border: 1px solid alpha(@accent_color, 0.55); border-radius: 12px; }\n\
+        ".yeet-shelf { border: 1px solid alpha(@theme_selected_bg_color, 0.55); border-radius: 12px; }\n\
+         .yeet-shelf .boxed-list, .yeet-shelf scrolledwindow, .yeet-shelf viewport { background: transparent; }\n\
          .yeet-shelf.shelf-dormant { background: transparent; border-color: transparent; }\n\
-         .yeet-edge { background: alpha(@accent_color, 0.04); }\n\
-         .yeet-edge:drop(active) { background: alpha(@accent_color, 0.65); }\n\
-         .yeet-shelf.drop-active { border: 3px solid @accent_color; background: alpha(@accent_bg_color, 0.16); }\n\
+         .yeet-edge { background: alpha(@theme_selected_bg_color, 0.04); }\n\
+         .yeet-edge:drop(active) { background: alpha(@theme_selected_bg_color, 0.65); }\n\
+         .yeet-shelf.drop-active { border: 3px solid @theme_selected_bg_color; background: alpha(@theme_selected_bg_color, 0.16); }\n\
          .yeet-shelf.duplicate { border: 3px solid @warning_color; }\n\
          .boxed-list row.duplicate { background: alpha(@warning_color, 0.30); outline: 3px solid @warning_color; outline-offset: -3px; }\n\
          .title { font-weight: 800; letter-spacing: 2px; }\n\
