@@ -19,6 +19,7 @@ use yeet::model::{AddReport, ShelfItem, ShelfModel};
 use yeet::settings::{
     HotkeyBinding, MAX_SHELF_OPACITY, MIN_SHELF_OPACITY, SHELF_WIDTH, ScreenEdge, Settings, Theme,
 };
+use yeet::uri::{is_file_uri, is_web_uri};
 
 thread_local! {
     static THUMBNAIL_CACHE: RefCell<HashMap<PathBuf, gdk::Texture>> = RefCell::new(HashMap::new());
@@ -193,14 +194,7 @@ impl Ui {
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         footer.set_accessible_role(gtk::AccessibleRole::Toolbar);
         footer.update_property(&[gtk::accessible::Property::Label(tr("shelf_actions"))]);
-        let mode = if platform::layer_shell_supported() {
-            tr("wayland_mode")
-        } else if cfg!(target_os = "windows") {
-            tr("windows_mode")
-        } else {
-            tr("fallback_mode")
-        };
-        let mode_label = gtk::Label::new(Some(mode));
+        let mode_label = gtk::Label::new(Some(mode_label_text()));
         mode_label.add_css_class("dim-label");
         mode_label.set_hexpand(true);
         mode_label.set_halign(gtk::Align::Start);
@@ -792,16 +786,9 @@ impl Ui {
                 let ui = self.clone();
                 let id = item.id;
                 pin.connect_clicked(move |_| {
-                    let index = ui
-                        .model
-                        .borrow()
-                        .items()
-                        .iter()
-                        .position(|item| item.id == id);
-                    let result = index
-                        .map(|index| ui.model.borrow_mut().toggle_pinned(index))
-                        .transpose();
-                    if let Err(error) = result {
+                    if let Some(index) = ui.item_index(id)
+                        && let Err(error) = ui.model.borrow_mut().toggle_pinned(index)
+                    {
                         eprintln!("yeet: {error:#}");
                     }
                     ui.refresh();
@@ -810,23 +797,7 @@ impl Ui {
             {
                 let ui = self.clone();
                 let id = item.id;
-                remove.connect_clicked(move |_| {
-                    let index = ui
-                        .model
-                        .borrow()
-                        .items()
-                        .iter()
-                        .position(|item| item.id == id);
-                    let result = index
-                        .map(|index| ui.model.borrow_mut().remove(index))
-                        .transpose();
-                    if let Err(error) = result {
-                        eprintln!("yeet: {error:#}");
-                    }
-                    ui.selected.borrow_mut().remove(&id);
-                    ui.refresh();
-                    ui.hide_if_empty();
-                });
+                remove.connect_clicked(move |_| ui.remove_item(id));
             }
             attach_context_menu(&content, self, item.id, item.path.clone());
             add_drag_source(&content, self, Some(item.id));
@@ -1077,6 +1048,33 @@ impl Ui {
             .and_then(|index| self.model.borrow().items().get(index).map(|item| item.id))
     }
 
+    /// The current index of an item, or `None` once it has left the shelf.
+    fn item_index(&self, id: Uuid) -> Option<usize> {
+        self.model
+            .borrow()
+            .items()
+            .iter()
+            .position(|item| item.id == id)
+    }
+
+    /// Show the shelf after a capture added something to it.
+    fn present_capture(self: &Rc<Self>) {
+        self.refresh();
+        self.show(None);
+    }
+
+    /// Remove one item by id and settle the selection, list and shelf around it.
+    fn remove_item(self: &Rc<Self>, id: Uuid) {
+        if let Some(index) = self.item_index(id)
+            && let Err(error) = self.model.borrow_mut().remove(index)
+        {
+            eprintln!("yeet: {error:#}");
+        }
+        self.selected.borrow_mut().remove(&id);
+        self.refresh();
+        self.hide_if_empty();
+    }
+
     fn focus_row(&self, index: usize, extend_selection: bool) {
         let Some(row) = self.list.row_at_index(index as i32) else {
             self.list.grab_focus();
@@ -1221,25 +1219,14 @@ impl Ui {
         let shelf = self.shelf.clone();
         let rows: Vec<gtk::ListBoxRow> = ids
             .iter()
-            .filter_map(|id| {
-                self.model
-                    .borrow()
-                    .items()
-                    .iter()
-                    .position(|item| &item.id == id)
-            })
+            .filter_map(|id| self.item_index(*id))
             .filter_map(|index| self.list.row_at_index(index as i32))
             .collect();
         for row in &rows {
             row.add_css_class("duplicate");
         }
         if let Some(id) = ids.first()
-            && let Some(index) = self
-                .model
-                .borrow()
-                .items()
-                .iter()
-                .position(|item| &item.id == id)
+            && let Some(index) = self.item_index(*id)
         {
             self.focus_row_without_selection(index);
         }
@@ -1289,14 +1276,7 @@ impl Ui {
         self.empty.set_text(tr("drop_here"));
         self.empty
             .update_property(&[gtk::accessible::Property::Label(tr("empty_help"))]);
-        self.mode_label
-            .set_text(if platform::layer_shell_supported() {
-                tr("wayland_mode")
-            } else if cfg!(target_os = "windows") {
-                tr("windows_mode")
-            } else {
-                tr("fallback_mode")
-            });
+        self.mode_label.set_text(mode_label_text());
         self.clear_button
             .set_tooltip_text(Some(tr("clear_unpinned")));
         self.clipboard_button
@@ -1332,8 +1312,7 @@ impl Ui {
             {
                 let paths = files.files().into_iter().filter_map(|file| file.path());
                 if ui.model.borrow_mut().add_paths(paths).unwrap_or(0) > 0 {
-                    ui.refresh();
-                    ui.show(None);
+                    ui.present_capture();
                     return;
                 }
             }
@@ -1350,15 +1329,13 @@ impl Ui {
                     )
                     .unwrap_or(false)
             {
-                ui.refresh();
-                ui.show(None);
+                ui.present_capture();
                 return;
             }
             if let Ok(Some(text)) = clipboard.read_text_future().await
                 && ui.model.borrow_mut().add_text(&text).unwrap_or(false)
             {
-                ui.refresh();
-                ui.show(None);
+                ui.present_capture();
             }
         });
     }
@@ -1697,6 +1674,17 @@ impl Ui {
     }
 }
 
+/// The backend name shown in the shelf footer.
+fn mode_label_text() -> &'static str {
+    if platform::layer_shell_supported() {
+        tr("wayland_mode")
+    } else if cfg!(target_os = "windows") {
+        tr("windows_mode")
+    } else {
+        tr("fallback_mode")
+    }
+}
+
 fn finish_shelf_hide(shelf: &gtk::ApplicationWindow) {
     if platform::uses_premapped_shelf() {
         platform::set_shelf_input_enabled(shelf, false);
@@ -1771,6 +1759,15 @@ struct ActiveDragItem {
     pinned: bool,
 }
 
+/// The shelf fields a drag needs, snapshotted so the drag outlives the row.
+fn active_item(item: &ShelfItem) -> ActiveDragItem {
+    ActiveDragItem {
+        id: item.id,
+        path: item.path.clone(),
+        pinned: item.pinned,
+    }
+}
+
 fn add_drag_source(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, source_id: Option<Uuid>) {
     let source = gtk::DragSource::builder()
         .actions(gdk::DragAction::COPY)
@@ -1791,32 +1788,16 @@ fn add_drag_source(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, source_id: Optio
                     .items()
                     .iter()
                     .filter(|item| selected.contains(&item.id))
-                    .map(|item| ActiveDragItem {
-                        id: item.id,
-                        path: item.path.clone(),
-                        pinned: item.pinned,
-                    })
+                    .map(active_item)
                     .collect(),
                 Some(source_id) => model
                     .items()
                     .iter()
                     .find(|item| item.id == source_id)
-                    .map(|item| ActiveDragItem {
-                        id: item.id,
-                        path: item.path.clone(),
-                        pinned: item.pinned,
-                    })
+                    .map(active_item)
                     .into_iter()
                     .collect(),
-                None => model
-                    .items()
-                    .iter()
-                    .map(|item| ActiveDragItem {
-                        id: item.id,
-                        path: item.path.clone(),
-                        pinned: item.pinned,
-                    })
-                    .collect(),
+                None => model.items().iter().map(active_item).collect(),
             };
             source.set_actions(
                 match DragOffer::for_items(items.iter().map(|item| item.pinned)) {
@@ -1962,10 +1943,7 @@ fn attach_drop_target(
                     ui.model
                         .borrow_mut()
                         .add_text(&text)
-                        .map(|added| AddReport {
-                            added: usize::from(added),
-                            ..AddReport::default()
-                        })
+                        .map(AddReport::for_added)
                 }
             } else if let Ok(texture) = value.get::<gdk::Texture>() {
                 let path = match ui.model.borrow().managed_path("png") {
@@ -1986,10 +1964,7 @@ fn attach_drop_target(
                         tr("image_snippet").to_owned(),
                         Some("image/png".to_owned()),
                     )
-                    .map(|added| AddReport {
-                        added: usize::from(added),
-                        ..AddReport::default()
-                    })
+                    .map(AddReport::for_added)
             } else {
                 return false;
             };
@@ -2048,10 +2023,7 @@ impl DropPayload {
     }
 
     fn push_uri(&mut self, uri: &str) {
-        if uri
-            .get(..7)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file://"))
-        {
+        if is_file_uri(uri) {
             if let Some(path) = gio::File::for_uri(uri).path() {
                 self.paths.push(path);
             } else {
@@ -2089,14 +2061,6 @@ fn looks_like_uri(value: &str) -> bool {
             b'0'..=b'9' | b'+' | b'-' | b'.' => index > 0,
             _ => false,
         })
-}
-
-fn is_web_uri(uri: &str) -> bool {
-    uri.get(..7)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
-        || uri
-            .get(..8)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
 }
 
 fn install_keyboard(ui: &Rc<Ui>) {
@@ -2394,22 +2358,7 @@ fn attach_context_menu(widget: &impl IsA<gtk::Widget>, ui: &Rc<Ui>, id: Uuid, pa
     }
     {
         let ui = ui.clone();
-        remove.connect_clicked(move |_| {
-            let index = ui
-                .model
-                .borrow()
-                .items()
-                .iter()
-                .position(|item| item.id == id);
-            if let Some(index) = index
-                && let Err(error) = ui.model.borrow_mut().remove(index)
-            {
-                eprintln!("yeet: {error}");
-            }
-            ui.selected.borrow_mut().remove(&id);
-            ui.refresh();
-            ui.hide_if_empty();
-        });
+        remove.connect_clicked(move |_| ui.remove_item(id));
     }
     {
         let ui = ui.clone();

@@ -1,3 +1,4 @@
+use crate::atomic_file::write_atomic;
 use crate::i18n::Language;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,16 @@ impl HotkeyBinding {
     const SHIFT: u32 = 0x0004;
     const WIN: u32 = 0x0008;
 
+    /// Every modifier with its bit and the three spellings Yeet renders it in:
+    /// the canonical name, the XDG portal name, and the GTK accelerator name.
+    /// The order is the order all three outputs use.
+    const MODIFIERS: [(u32, &'static str, &'static str, &'static str); 4] = [
+        (Self::CONTROL, "Ctrl", "CTRL", "<Control>"),
+        (Self::ALT, "Alt", "ALT", "<Alt>"),
+        (Self::SHIFT, "Shift", "SHIFT", "<Shift>"),
+        (Self::WIN, "Win", "SUPER", "<Super>"),
+    ];
+
     pub fn parse(input: &str) -> Result<Self, HotkeyParseError> {
         let input = input.trim();
         if input.is_empty() {
@@ -75,19 +86,11 @@ impl HotkeyBinding {
             return Err(HotkeyParseError::MissingModifier);
         }
         let (key_name, virtual_key) = key.ok_or(HotkeyParseError::MissingKey)?;
-        let mut names = Vec::with_capacity(5);
-        if modifiers & Self::CONTROL != 0 {
-            names.push("Ctrl");
-        }
-        if modifiers & Self::ALT != 0 {
-            names.push("Alt");
-        }
-        if modifiers & Self::SHIFT != 0 {
-            names.push("Shift");
-        }
-        if modifiers & Self::WIN != 0 {
-            names.push("Win");
-        }
+        let mut names: Vec<&str> = Self::MODIFIERS
+            .iter()
+            .filter(|(mask, ..)| modifiers & mask != 0)
+            .map(|(_, name, ..)| *name)
+            .collect();
         names.push(&key_name);
 
         Ok(Self {
@@ -128,20 +131,13 @@ impl HotkeyBinding {
     /// The shortcut in the syntax of the XDG GlobalShortcuts specification,
     /// for example `CTRL+ALT+y`. KDE's portal backend expects this form.
     pub fn portal_trigger(&self) -> String {
-        let mut parts = Vec::with_capacity(5);
-        if self.modifiers & Self::CONTROL != 0 {
-            parts.push("CTRL".to_owned());
-        }
-        if self.modifiers & Self::ALT != 0 {
-            parts.push("ALT".to_owned());
-        }
-        if self.modifiers & Self::SHIFT != 0 {
-            parts.push("SHIFT".to_owned());
-        }
-        if self.modifiers & Self::WIN != 0 {
-            parts.push("SUPER".to_owned());
-        }
-        parts.push(self.keysym_name());
+        let key = self.keysym_name();
+        let mut parts: Vec<&str> = Self::MODIFIERS
+            .iter()
+            .filter(|(mask, ..)| self.modifiers & mask != 0)
+            .map(|(_, _, portal, _)| *portal)
+            .collect();
+        parts.push(&key);
         parts.join("+")
     }
 
@@ -152,17 +148,10 @@ impl HotkeyBinding {
     /// bind anything it cannot parse.
     pub fn gtk_accelerator(&self) -> String {
         let mut accelerator = String::new();
-        if self.modifiers & Self::CONTROL != 0 {
-            accelerator.push_str("<Control>");
-        }
-        if self.modifiers & Self::ALT != 0 {
-            accelerator.push_str("<Alt>");
-        }
-        if self.modifiers & Self::SHIFT != 0 {
-            accelerator.push_str("<Shift>");
-        }
-        if self.modifiers & Self::WIN != 0 {
-            accelerator.push_str("<Super>");
+        for (mask, _, _, gtk) in Self::MODIFIERS {
+            if self.modifiers & mask != 0 {
+                accelerator.push_str(gtk);
+            }
         }
         accelerator.push_str(&self.keysym_name());
         accelerator
@@ -339,21 +328,10 @@ impl Settings {
 
     pub fn save(&self) -> io::Result<()> {
         let path = settings_path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let temporary = path.with_extension("json.tmp");
         let mut normalized = self.clone();
         normalized.normalize();
-        fs::write(
-            &temporary,
-            serde_json::to_vec_pretty(&normalized).map_err(io::Error::other)?,
-        )?;
-        #[cfg(windows)]
-        if path.exists() {
-            fs::remove_file(&path)?;
-        }
-        fs::rename(temporary, path)
+        let data = serde_json::to_vec_pretty(&normalized).map_err(io::Error::other)?;
+        write_atomic(&path, &data)
     }
 }
 
