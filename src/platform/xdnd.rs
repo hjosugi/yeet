@@ -29,7 +29,8 @@ use async_channel::Sender;
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
 use x11rb::protocol::xfixes::{ConnectionExt as XfixesConnectionExt, SelectionEventMask};
-use x11rb::protocol::xproto::{ConnectionExt, KeyButMask};
+use x11rb::protocol::xinput::{ConnectionExt as XinputConnectionExt, EventMask, XIEventMask};
+use x11rb::protocol::xproto::ConnectionExt;
 use x11rb::rust_connection::RustConnection;
 
 use super::DragPhase;
@@ -46,16 +47,12 @@ const DRAG_POLL_INTERVAL: Duration = Duration::from_millis(120);
 /// drag here instead.
 const DRAG_MAX_DURATION: Duration = Duration::from_secs(120);
 
-/// Whether the pointer still holds any button, which is what "a drag is still
-/// in flight" means to every drag source there is.
-fn dragging(mask: KeyButMask) -> bool {
-    let buttons = KeyButMask::BUTTON1
-        | KeyButMask::BUTTON2
-        | KeyButMask::BUTTON3
-        | KeyButMask::BUTTON4
-        | KeyButMask::BUTTON5;
-    u16::from(mask) & u16::from(buttons) != 0
-}
+/// How long the pointer has to stay still before a drag is treated as over.
+///
+/// On GNOME the drag belongs to the compositor: XWayland sees neither the
+/// pointer button nor a release of `XdndSelection`, so movement is the only
+/// sign that a drag is still in progress.
+const DRAG_IDLE_TIMEOUT: Duration = Duration::from_millis(1200);
 
 /// Report whether this session can tell Yeet that a drag started.
 ///
@@ -113,6 +110,9 @@ struct Session {
     connection: RustConnection,
     root: u32,
     selection: u32,
+    /// Whether XInput2 raw button events are available, which is the only
+    /// reliable end-of-drag signal for a drag the Wayland compositor owns.
+    raw_buttons: bool,
 }
 
 impl Session {
@@ -149,10 +149,12 @@ impl Session {
             .check()
             .inspect_err(|error| eprintln!("yeet: drag watch was refused: {error}"))
             .ok()?;
+        let raw_buttons = select_raw_button_events(&connection, root).is_some();
         Some(Self {
             connection,
             root,
             selection,
+            raw_buttons,
         })
     }
 
@@ -184,30 +186,82 @@ impl Session {
         )
     }
 
-    /// Block until every pointer button is up, the watch is dropped, or the
-    /// drag has run long enough to be considered lost.
+    /// Block until the drag is over, the watch is dropped, or the drag has run
+    /// long enough to be considered lost.
+    ///
+    /// GNOME hands a drag to the compositor, and XWayland then sees neither the
+    /// pointer button nor a release of `XdndSelection`; the only sign that the
+    /// drag is still alive is that the pointer keeps moving. A raw button
+    /// release, where the session provides one, ends the drag immediately.
     fn wait_for_release(&self, sender: &Sender<DragPhase>, stopped: &AtomicBool) {
         let deadline = Instant::now() + DRAG_MAX_DURATION;
+        let mut last_position = self.pointer_position();
+        let mut last_movement = Instant::now();
         loop {
             thread::sleep(DRAG_POLL_INTERVAL);
             if stopped.load(Ordering::Relaxed) || sender.is_closed() || Instant::now() >= deadline {
                 return;
             }
-            // Selection traffic keeps arriving during the drag; dropping it
-            // here keeps the queue from growing until the drag is over.
-            while matches!(self.connection.poll_for_event(), Ok(Some(_))) {}
-            let Ok(Ok(pointer)) = self
-                .connection
-                .query_pointer(self.root)
-                .map(|cookie| cookie.reply())
-            else {
-                return;
-            };
-            if !dragging(pointer.mask) {
+            while let Ok(Some(event)) = self.connection.poll_for_event() {
+                if self.ends_a_drag(&event) {
+                    return;
+                }
+            }
+            let position = self.pointer_position();
+            if position != last_position {
+                last_position = position;
+                last_movement = Instant::now();
+            } else if last_movement.elapsed() >= DRAG_IDLE_TIMEOUT {
                 return;
             }
         }
     }
+
+    /// Whether an event is the end of the drag in progress.
+    fn ends_a_drag(&self, event: &Event) -> bool {
+        match event {
+            Event::XinputRawButtonRelease(_) => self.raw_buttons,
+            Event::XfixesSelectionNotify(notify) => {
+                notify.selection == self.selection && notify.owner == x11rb::NONE
+            }
+            _ => false,
+        }
+    }
+
+    /// Where the pointer is, in root coordinates.
+    fn pointer_position(&self) -> Option<(i16, i16)> {
+        let reply = self
+            .connection
+            .query_pointer(self.root)
+            .ok()?
+            .reply()
+            .ok()?;
+        Some((reply.root_x, reply.root_y))
+    }
+}
+
+/// Ask for raw button press/release events on the root window.
+///
+/// Raw events bypass grabs, so they are the only way to learn that the user
+/// let go of a drag the Wayland compositor owns: the core pointer and the XDND
+/// selection both stay as they were for the whole drag.
+fn select_raw_button_events(connection: &RustConnection, root: u32) -> Option<()> {
+    let _ = connection
+        .xinput_xi_query_version(2, 0)
+        .ok()?
+        .reply()
+        .ok()?;
+    let mask = EventMask {
+        // XIAllMasterDevices: every pointer, rather than one device id.
+        deviceid: 1,
+        mask: vec![XIEventMask::RAW_BUTTON_PRESS | XIEventMask::RAW_BUTTON_RELEASE],
+    };
+    connection
+        .xinput_xi_select_events(root, &[mask])
+        .ok()?
+        .check()
+        .inspect_err(|error| eprintln!("yeet: raw button events unavailable: {error}"))
+        .ok()
 }
 
 #[cfg(test)]

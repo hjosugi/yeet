@@ -156,6 +156,7 @@ impl Ui {
         count.update_property(&[gtk::accessible::Property::Label("0 items on the shelf")]);
         let hide = gtk::Button::from_icon_name("window-minimize-symbolic");
         hide.add_css_class("flat");
+        hide.set_tooltip_text(Some(tr("hide_shelf")));
         set_button_accessibility(&hide, tr("hide_shelf"), "Escape");
         // The header is only the move handle; every action button lives in the
         // footer so the shelf has a single row of icons.
@@ -723,6 +724,11 @@ impl Ui {
                 "window-pin-symbolic"
             });
             pin.add_css_class("flat");
+            pin.set_tooltip_text(Some(if item.pinned {
+                tr("unpin_item")
+            } else {
+                tr("pin_item")
+            }));
             set_button_accessibility(
                 &pin,
                 if item.pinned {
@@ -734,9 +740,11 @@ impl Ui {
             );
             let preview = gtk::Button::from_icon_name("document-open-symbolic");
             preview.add_css_class("flat");
+            preview.set_tooltip_text(Some(tr("preview_item")));
             set_button_accessibility(&preview, tr("preview_item"), "Space or Enter");
             let remove = gtk::Button::from_icon_name("window-close-symbolic");
             remove.add_css_class("flat");
+            remove.set_tooltip_text(Some(tr("remove_item")));
             set_button_accessibility(&remove, tr("remove_item"), "Delete");
             let actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
             actions.add_css_class("row-actions");
