@@ -2,7 +2,7 @@
 
 rustPlatform.buildRustPackage rec {
   pname = "yeet";
-  version = "0.7.3";
+  version = "0.7.4";
   src = lib.cleanSource ../..;
   cargoLock.lockFile = ../../Cargo.lock;
 
