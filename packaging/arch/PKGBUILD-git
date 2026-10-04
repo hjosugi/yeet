@@ -1,5 +1,5 @@
 pkgname=yeet-shelf-git
-pkgver=0.7.4.r0.g7b0c427
+pkgver=0.7.5.r0.gb2d820b
 pkgrel=1
 pkgdesc='Native Yoink-style drag-and-drop shelf for Wayland and Windows (git)'
 arch=('x86_64')
