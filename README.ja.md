@@ -11,11 +11,12 @@ Esc や無効な場所への drop で item を失いません。ドラッグ開�
 
 ![2つのファイルを保持したYeetシェルフ](docs/screenshots/yeet-linux-dark.png)
 
-現在のreleaseは **v0.7.4** です。dragが画面端に届いてからではなく、dragを
-始めた時点でshelfを出すようになりました。0.6.1向けに書かれたfix——Windowsの起動で
-console windowが点滅する問題と、tray常駐中のpolling——も含みます。application、
-Cargo packageとも名前は単にYeetで、native Rust/GTK 4の単一codebaseです。v0.6では
-shelfを好きな位置へdragできるようにし、platform backendを仕組みごとに分割して
+現在のreleaseは **v0.7.5** です。GNOMEでのWaylandネイティブdragでは、XWaylandから
+見えないpointerの動きではなくselectionからdragの終わりを読むようになり、dragが本当に
+終わるまでshelfを維持します。0.7.4のdrag開始時revealと、0.6.1向けに書かれたfix——
+Windowsの起動でconsole windowが点滅する問題と、tray常駐中のpolling——も含みます。
+application、Cargo packageとも名前は単にYeetで、native Rust/GTK 4の単一codebaseです。
+v0.6ではshelfを好きな位置へdragできるようにし、platform backendを仕組みごとに分割して
 GNOMEでも companion shell extension か XWayland のどちらかで最前面を維持できる
 ようにし、cross-platform installerの`yeetup`を追加しました。ただし、実装済みで
 あることと各compositor/Windows環境での確認済みは区別しています。実機確認状況は
@@ -170,9 +171,9 @@ AppImageはGTK 4のruntimeを同梱しているため、他に何もインスト
 どのディストリビューションでも動きます。
 
 ```sh
-curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.7.4-linux-x86_64.AppImage
-chmod +x yeet-0.7.4-linux-x86_64.AppImage
-./yeet-0.7.4-linux-x86_64.AppImage --hidden
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.7.5-linux-x86_64.AppImage
+chmod +x yeet-0.7.5-linux-x86_64.AppImage
+./yeet-0.7.5-linux-x86_64.AppImage --hidden
 ```
 
 ### yeetup（インストール・更新・削除）
@@ -181,9 +182,9 @@ chmod +x yeet-0.7.4-linux-x86_64.AppImage
 インストールして、書き込んだファイルを記録します。
 
 ```sh
-curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.7.4-linux-x86_64
-chmod +x yeetup-0.7.4-linux-x86_64
-./yeetup-0.7.4-linux-x86_64 install      # sudo不要、~/.local へ
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.7.5-linux-x86_64
+chmod +x yeetup-0.7.5-linux-x86_64
+./yeetup-0.7.5-linux-x86_64 install      # sudo不要、~/.local へ
 ```
 
 以降は`yeetup update`で最新リリースへ更新、`yeetup status`で状態確認、
@@ -198,7 +199,7 @@ global shortcutは動作しません。
 現在のリリースアーカイブをダウンロードし、`/usr/local` へインストールします。
 
 ```sh
-version=0.7.4
+version=0.7.5
 base="https://github.com/hjosugi/yeet/releases/download/v${version}"
 curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
 curl -fLO "$base/SHA256SUMS-linux.txt"

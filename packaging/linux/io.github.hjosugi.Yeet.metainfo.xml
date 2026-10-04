@@ -32,6 +32,17 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.5" date="2026-10-04">
+      <description>
+        <p>Keeps the summoned shelf on screen for the whole of a Wayland-native
+        drag on GNOME. XWayland sees neither the pointer button nor the pointer
+        moving while the compositor owns the drag, so the previous watch ended
+        the drag as soon as the pointer paused and hid the shelf mid-drag. The
+        end of such a drag is now read from the selection: the compositor
+        answers TARGETS on it for exactly as long as it holds the drag and
+        refuses once it let go.</p>
+      </description>
+    </release>
     <release version="0.7.4" date="2026-10-03">
       <description>
         <p>Fixes the shelf staying on screen after a drag on GNOME. A

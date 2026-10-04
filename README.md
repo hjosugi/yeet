@@ -11,17 +11,19 @@ leaves the shelf, it disappears.
 
 ![Yeet shelf holding two files](docs/screenshots/yeet-linux-dark.png)
 
-> Development status: **v0.7.4 is the current release**. It reveals the shelf
-> as soon as a drag starts rather than when it reaches the screen edge, and it
-> carries the fixes first written for 0.6.1: a Windows launch that flashed
-> console windows, and the polling Yeet did while it sat in the tray. The
-> application and Cargo package are named simply Yeet and use one native
-> Rust/GTK 4 codebase. v0.6 added a shelf you can drag
-> anywhere, one backend per mechanism so GNOME is served by a companion shell
-> extension or XWayland rather than by nothing, and `yeetup`, a cross-platform
-> installer. Real compositor and interactive Windows verification remains
-> tracked separately in the [test matrix](docs/compositors.md); an implemented
-> path is not presented as a verified platform result.
+> Development status: **v0.7.5 is the current release**. It keeps the shelf up
+> for the whole of a Wayland-native drag on GNOME: the end of a compositor-owned
+> drag is read from its selection instead of from the pointer, which XWayland
+> cannot see. On top of that it carries 0.7.4's reveal-as-soon-as-a-drag-starts
+> and the fixes first written for 0.6.1: a Windows launch that flashed console
+> windows, and the polling Yeet did while it sat in the tray. The application
+> and Cargo package are named simply Yeet and use one native Rust/GTK 4
+> codebase. v0.6 added a shelf you can drag anywhere, one backend per mechanism
+> so GNOME is served by a companion shell extension or XWayland rather than by
+> nothing, and `yeetup`, a cross-platform installer. Real compositor and
+> interactive Windows verification remains tracked separately in the
+> [test matrix](docs/compositors.md); an implemented path is not presented as a
+> verified platform result.
 
 ## Quick start
 
@@ -239,9 +241,9 @@ The AppImage carries its own GTK 4 runtime, so it runs on any distribution
 without installing anything else:
 
 ```sh
-curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.7.4-linux-x86_64.AppImage
-chmod +x yeet-0.7.4-linux-x86_64.AppImage
-./yeet-0.7.4-linux-x86_64.AppImage --hidden
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeet-0.7.5-linux-x86_64.AppImage
+chmod +x yeet-0.7.5-linux-x86_64.AppImage
+./yeet-0.7.5-linux-x86_64.AppImage --hidden
 ```
 
 ### yeetup (installs, updates and removes)
@@ -250,9 +252,9 @@ chmod +x yeet-0.7.4-linux-x86_64.AppImage
 published checksums, installs it and records what it wrote:
 
 ```sh
-curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.7.4-linux-x86_64
-chmod +x yeetup-0.7.4-linux-x86_64
-./yeetup-0.7.4-linux-x86_64 install      # into ~/.local, no sudo
+curl -fLO https://github.com/hjosugi/yeet/releases/latest/download/yeetup-0.7.5-linux-x86_64
+chmod +x yeetup-0.7.5-linux-x86_64
+./yeetup-0.7.5-linux-x86_64 install      # into ~/.local, no sudo
 ```
 
 Later, `yeetup update` moves to the newest release, `yeetup status` reports what
@@ -267,7 +269,7 @@ always-on-top shelf, no tray icon and no global shortcut.
 Download the current release archive and install it under `/usr/local`:
 
 ```sh
-version=0.7.4
+version=0.7.5
 base="https://github.com/hjosugi/yeet/releases/download/v${version}"
 curl -fLO "$base/yeet-${version}-linux-x86_64.tar.gz"
 curl -fLO "$base/SHA256SUMS-linux.txt"
