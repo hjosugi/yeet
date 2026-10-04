@@ -10,16 +10,23 @@ Wayland session or a compile-only CI run.
 |---|---|---:|---|---|
 | sway / Hyprland / niri / river | `gtk4-layer-shell` overlay | expected | XWayland sources only, and only when XWayland is running | `yeet --toggle` |
 | KDE Plasma (Wayland) | `gtk4-layer-shell` overlay | expected | XWayland sources only, and only when XWayland is running | compositor binding |
-| GNOME Shell | XWayland dock strips + `_NET_WM_STATE_ABOVE` shelf | expected | XWayland sources only | portal shortcut, `yeet --toggle` |
-| GNOME Shell + Yeet extension | native Wayland, raised and placed by the extension | expected | XWayland sources only | portal shortcut, `yeet --toggle` |
+| GNOME Shell | XWayland dock strips + `_NET_WM_STATE_ABOVE` shelf | expected | every drag source | portal shortcut, `yeet --toggle` |
+| GNOME Shell + Yeet extension | native Wayland, raised and placed by the extension | expected | every drag source, while XWayland is enabled | portal shortcut, `yeet --toggle` |
 | X11 session | dock strips + `_NET_WM_STATE_ABOVE` shelf | expected | every drag source | `yeet --toggle` |
 
 "Summon on drag" is the `summon_on_drag` setting, on by default. It subscribes
 to XFIXES notifications for the `XdndSelection` selection, which every XDND
-drag source must own while it drags. A Wayland-native drag never touches that
-selection and is therefore invisible to it — the edge strip remains the trigger
-for those, which is why no row above reads "every drag source" on a Wayland
-session. A session with no `DISPLAY` at all disables the setting outright.
+drag source must own while it drags. Mutter also takes that selection for
+every Wayland-native drag, so that XWayland windows can accept the drop, which
+makes native drags visible on GNOME too. Whether other compositors do the same
+has not been checked, so their rows still read "XWayland sources only" and the
+edge strip remains the trigger for native drags there. A session with no
+`DISPLAY` at all disables the setting outright.
+
+The end of a native drag cannot be read from XWayland's pointer: neither the
+button nor any motion reaches X while the compositor holds the drag. Yeet asks
+the selection owner for `TARGETS` instead, which Mutter grants for exactly as
+long as the drag is alive.
 
 Yeet checks `gtk4-layer-shell` protocol support at runtime. It configures
 separate overlay surfaces for the always-mapped strip and shelf, with
@@ -89,6 +96,14 @@ stay partial. The global shortcut is registered by GNOME
 delivery of the activation was not exercised. The mid-drag rows still need a
 real file-manager drag, and the multi-output and fractional-scale rows need
 hardware that was not attached.
+
+GNOME 50.5 on Wayland was probed on 2026-10-04 during a real drag. Mutter's
+selection window took `XdndSelection` as the drag began; over the following
+15 minutes XWayland reported a single pointer position change, no XInput2 raw
+motion or button events, and no release of the selection. Once the drag was
+over, `TARGETS` on `XdndSelection` was refused, while the same window granted
+`TARGETS` on `CLIPBOARD` for a live Wayland clipboard owner. This is why the
+end of a native drag is read from `TARGETS` rather than from pointer movement.
 
 ## Scripted smoke
 

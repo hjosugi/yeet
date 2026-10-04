@@ -153,7 +153,8 @@ and the strip, the shortcut and the CLI are untouched everywhere.
   selection for the duration of the drag, so `XFixesSelectSelectionInput` on
   that selection turns drag-start into an ordinary X event. This covers a pure
   X11 session completely, and a Wayland session partially: XWayland clients are
-  seen, Wayland-native ones are not.
+  always seen, Wayland-native ones only where the compositor mirrors its own
+  drags into `XdndSelection`, as Mutter does.
 - **Windows.** An out-of-context `SetWinEventHook` over
   `EVENT_OBJECT_CREATE`/`EVENT_OBJECT_DESTROY` watches for the `SysDragImage`
   window the shell drag helper creates and destroys around a drag. Nothing is
@@ -164,8 +165,14 @@ and the strip, the shortcut and the CLI are untouched everywhere.
 
 Neither backend reads what is being dragged; both report only that a drag
 exists. Drag *end* is reported by neither — XDND keeps the selection past the
-drop so the target can still fetch the data — so the pointer button is sampled
-instead, and only between a drag Yeet has already reacted to and its release.
+drop so the target can still fetch the data — so it is sampled instead, and
+only between a drag Yeet has already reacted to and its end. For an X11 drag
+source the sample is the pointer button. A Wayland-native drag that Mutter
+mirrors gives XWayland nothing to sample: neither its button nor any pointer
+motion reaches X while it lasts. Mutter does answer `TARGETS` on
+`XdndSelection` for exactly as long as it holds the drag, from its own
+bookkeeping and without involving the drag source, so a refused `TARGETS`
+request marks the end. The type list in a granted answer is discarded unread.
 
 ### 5.2 Wayland (Linux)
 

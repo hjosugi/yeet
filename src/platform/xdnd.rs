@@ -16,9 +16,20 @@
 //!
 //! Ending is the harder half. XDND leaves selection ownership with the source
 //! after the drop so the target can still fetch the data, so there is no
-//! matching "released" event to wait for. The pointer button is the reliable
-//! signal instead, and it is only sampled while a drag this module has already
-//! announced is still in flight — an idle Yeet makes no X requests at all.
+//! matching "released" event to wait for. Which signal stands in for it
+//! depends on who is dragging:
+//!
+//! - An X11 client drags under a pointer grab the X server can see, so the
+//!   pointer button is the reliable signal.
+//! - A Wayland-native drag on Mutter is mirrored into `XdndSelection` by the
+//!   compositor, but XWayland never sees its button or its pointer moving. The
+//!   compositor answers `TARGETS` on the selection for exactly as long as it
+//!   still holds the drag, so that answer is the signal. The request is served
+//!   from the compositor's own bookkeeping and never reaches the application
+//!   being dragged from, and the list it returns is discarded unread.
+//!
+//! Either is only sampled while a drag this module has already announced is
+//! still in flight — an idle Yeet makes no X requests at all.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,13 +40,12 @@ use async_channel::Sender;
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
 use x11rb::protocol::xfixes::{ConnectionExt as XfixesConnectionExt, SelectionEventMask};
-use x11rb::protocol::xinput::{ConnectionExt as XinputConnectionExt, EventMask, XIEventMask};
-use x11rb::protocol::xproto::ConnectionExt;
+use x11rb::protocol::xproto::{ConnectionExt, CreateWindowAux, KeyButMask, WindowClass};
 use x11rb::rust_connection::RustConnection;
 
 use super::DragPhase;
 
-/// How often the pointer is sampled while a drag is in flight.
+/// How often a drag in flight is checked for its end.
 ///
 /// Short enough that the shelf does not linger after a cancelled drag, long
 /// enough that a slow drag across a large desktop costs a handful of round
@@ -47,12 +57,29 @@ const DRAG_POLL_INTERVAL: Duration = Duration::from_millis(120);
 /// drag here instead.
 const DRAG_MAX_DURATION: Duration = Duration::from_secs(120);
 
-/// How long the pointer has to stay still before a drag is treated as over.
-///
-/// On GNOME the drag belongs to the compositor: XWayland sees neither the
-/// pointer button nor a release of `XdndSelection`, so movement is the only
-/// sign that a drag is still in progress.
-const DRAG_IDLE_TIMEOUT: Duration = Duration::from_millis(1200);
+/// Whether the pointer still holds any button, which is what "a drag is still
+/// in flight" means to every X11 drag source there is.
+fn dragging(mask: KeyButMask) -> bool {
+    let buttons = KeyButMask::BUTTON1
+        | KeyButMask::BUTTON2
+        | KeyButMask::BUTTON3
+        | KeyButMask::BUTTON4
+        | KeyButMask::BUTTON5;
+    u16::from(mask) & u16::from(buttons) != 0
+}
+
+/// How the end of one drag is recognised, decided once as it starts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Tracking {
+    /// The X server sees the button driving the drag, so the drag is over once
+    /// no button is held.
+    Pointer,
+    /// No button is held as far as X can tell: the Wayland compositor owns the
+    /// drag and only mirrors it into `XdndSelection`. XWayland sees neither the
+    /// button nor the pointer for its whole length, so the drag lasts until the
+    /// selection owner stops offering anything.
+    Compositor,
+}
 
 /// Report whether this session can tell Yeet that a drag started.
 ///
@@ -110,9 +137,11 @@ struct Session {
     connection: RustConnection,
     root: u32,
     selection: u32,
-    /// Whether XInput2 raw button events are available, which is the only
-    /// reliable end-of-drag signal for a drag the Wayland compositor owns.
-    raw_buttons: bool,
+    /// An unmapped window that receives the answers to the drag probes.
+    requestor: u32,
+    targets: u32,
+    /// Where a probe's answer is delivered; deleted again unread.
+    property: u32,
 }
 
 impl Session {
@@ -131,12 +160,27 @@ impl Session {
             eprintln!("yeet: XFIXES unavailable, drags will only be seen at the edge: {error}");
             return None;
         }
-        let selection = connection
-            .intern_atom(false, selection.as_bytes())
+        let selection = intern(&connection, selection)?;
+        let targets = intern(&connection, "TARGETS")?;
+        let property = intern(&connection, "_YEET_DRAG_PROBE")?;
+        let requestor = connection.generate_id().ok()?;
+        connection
+            .create_window(
+                x11rb::COPY_DEPTH_FROM_PARENT,
+                requestor,
+                root,
+                0,
+                0,
+                1,
+                1,
+                0,
+                WindowClass::INPUT_ONLY,
+                x11rb::COPY_FROM_PARENT,
+                &CreateWindowAux::new(),
+            )
             .ok()?
-            .reply()
-            .ok()?
-            .atom;
+            .check()
+            .ok()?;
         connection
             .xfixes_select_selection_input(
                 root,
@@ -149,12 +193,13 @@ impl Session {
             .check()
             .inspect_err(|error| eprintln!("yeet: drag watch was refused: {error}"))
             .ok()?;
-        let raw_buttons = select_raw_button_events(&connection, root).is_some();
         Some(Self {
             connection,
             root,
             selection,
-            raw_buttons,
+            requestor,
+            targets,
+            property,
         })
     }
 
@@ -178,7 +223,8 @@ impl Session {
 
     fn starts_a_drag(&self, event: &Event) -> bool {
         // A source that takes the selection is starting a drag; one that drops
-        // it or disappears is ending one, which the pointer already told us.
+        // it or disappears is ending one, which `wait_for_release` has already
+        // acted on.
         matches!(
             event,
             Event::XfixesSelectionNotify(notify)
@@ -188,101 +234,113 @@ impl Session {
 
     /// Block until the drag is over, the watch is dropped, or the drag has run
     /// long enough to be considered lost.
-    ///
-    /// GNOME hands a drag to the compositor, and XWayland then sees neither the
-    /// pointer button nor a release of `XdndSelection`; the only sign that the
-    /// drag is still alive is that the pointer keeps moving. A raw button
-    /// release, where the session provides one, ends the drag immediately.
     fn wait_for_release(&self, sender: &Sender<DragPhase>, stopped: &AtomicBool) {
         let deadline = Instant::now() + DRAG_MAX_DURATION;
-        let mut last_position = self.pointer_position();
-        let mut last_movement = Instant::now();
+        let tracking = match self.buttons_held() {
+            Some(true) => Tracking::Pointer,
+            Some(false) => Tracking::Compositor,
+            None => return,
+        };
+        // A probe is outstanding until its answer arrives; asking again before
+        // then would only queue up duplicate answers.
+        let mut probing = false;
         loop {
+            if tracking == Tracking::Compositor && !probing {
+                if !self.probe() {
+                    return;
+                }
+                probing = true;
+            }
             thread::sleep(DRAG_POLL_INTERVAL);
             if stopped.load(Ordering::Relaxed) || sender.is_closed() || Instant::now() >= deadline {
                 return;
             }
             while let Ok(Some(event)) = self.connection.poll_for_event() {
-                if self.ends_a_drag(&event) {
-                    return;
+                match event {
+                    Event::SelectionNotify(notify) if notify.requestor == self.requestor => {
+                        probing = false;
+                        // A refusal means the owner has no drag left to offer.
+                        if notify.property == x11rb::NONE {
+                            return;
+                        }
+                        let _ = self
+                            .connection
+                            .delete_property(self.requestor, notify.property);
+                    }
+                    Event::XfixesSelectionNotify(notify)
+                        if notify.selection == self.selection && notify.owner == x11rb::NONE =>
+                    {
+                        return;
+                    }
+                    _ => {}
                 }
             }
-            let position = self.pointer_position();
-            if position != last_position {
-                last_position = position;
-                last_movement = Instant::now();
-            } else if last_movement.elapsed() >= DRAG_IDLE_TIMEOUT {
+            if tracking == Tracking::Pointer && self.buttons_held() != Some(true) {
                 return;
             }
         }
     }
 
-    /// Whether an event is the end of the drag in progress.
-    fn ends_a_drag(&self, event: &Event) -> bool {
-        match event {
-            Event::XinputRawButtonRelease(_) => self.raw_buttons,
-            Event::XfixesSelectionNotify(notify) => {
-                notify.selection == self.selection && notify.owner == x11rb::NONE
-            }
-            _ => false,
-        }
-    }
-
-    /// Where the pointer is, in root coordinates.
-    fn pointer_position(&self) -> Option<(i16, i16)> {
+    /// Whether the X server sees any pointer button held.
+    fn buttons_held(&self) -> Option<bool> {
         let reply = self
             .connection
             .query_pointer(self.root)
             .ok()?
             .reply()
             .ok()?;
-        Some((reply.root_x, reply.root_y))
+        Some(dragging(reply.mask))
+    }
+
+    /// Ask the selection owner which types it offers, answered on the
+    /// requestor window. Returns whether the request could be sent.
+    fn probe(&self) -> bool {
+        self.connection
+            .convert_selection(
+                self.requestor,
+                self.selection,
+                self.targets,
+                self.property,
+                x11rb::CURRENT_TIME,
+            )
+            .is_ok()
+            && self.connection.flush().is_ok()
     }
 }
 
-/// Ask for raw button press/release events on the root window.
-///
-/// Raw events bypass grabs, so they are the only way to learn that the user
-/// let go of a drag the Wayland compositor owns: the core pointer and the XDND
-/// selection both stay as they were for the whole drag.
-fn select_raw_button_events(connection: &RustConnection, root: u32) -> Option<()> {
-    let _ = connection
-        .xinput_xi_query_version(2, 0)
-        .ok()?
-        .reply()
-        .ok()?;
-    let mask = EventMask {
-        // XIAllMasterDevices: every pointer, rather than one device id.
-        deviceid: 1,
-        mask: vec![XIEventMask::RAW_BUTTON_PRESS | XIEventMask::RAW_BUTTON_RELEASE],
-    };
-    connection
-        .xinput_xi_select_events(root, &[mask])
-        .ok()?
-        .check()
-        .inspect_err(|error| eprintln!("yeet: raw button events unavailable: {error}"))
-        .ok()
+fn intern(connection: &RustConnection, name: &str) -> Option<u32> {
+    Some(
+        connection
+            .intern_atom(false, name.as_bytes())
+            .ok()?
+            .reply()
+            .ok()?
+            .atom,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use x11rb::protocol::xproto::{CreateWindowAux, WindowClass};
+    use x11rb::protocol::xproto::{
+        AtomEnum, EventMask, PropMode, SELECTION_NOTIFY_EVENT, SelectionNotifyEvent,
+    };
+    use x11rb::wrapper::ConnectionExt as _;
 
-    /// A selection no real application owns, so this exercises the live X
-    /// server without touching `XdndSelection` and the drags that use it.
-    const TEST_SELECTION: &str = "_YEET_DRAG_WATCH_TEST";
+    /// Selections no real application owns, so these exercise the live X
+    /// server without touching `XdndSelection` and the drags that use it. Each
+    /// test has its own: tests run in parallel, and one test's owner taking a
+    /// shared selection would end another test's drag.
+    const BEGIN_END_SELECTION: &str = "_YEET_DRAG_WATCH_TEST_BEGIN_END";
+    const OFFERED_SELECTION: &str = "_YEET_DRAG_WATCH_TEST_OFFERED";
+    const DROPPED_SELECTION: &str = "_YEET_DRAG_WATCH_TEST_DROPPED";
 
     /// How long a round trip through the X server, the watcher thread and the
     /// channel is allowed to take before the test calls it a failure.
     const DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
-    /// Take ownership of `TEST_SELECTION`, which is exactly what a drag source
-    /// does to `XdndSelection` when a drag begins.
-    fn claim_test_selection() -> Option<(RustConnection, u32)> {
-        claim_selection(TEST_SELECTION)
-    }
-
+    /// Take ownership of the selection `name`, which is exactly what a drag
+    /// source does to `XdndSelection` when a drag begins.
     fn claim_selection(name: &str) -> Option<(RustConnection, u32)> {
         let (connection, screen) = x11rb::connect(None).ok()?;
         let root = connection.setup().roots.get(screen)?.root;
@@ -319,6 +377,105 @@ mod tests {
         Some((connection, window))
     }
 
+    /// An owner of a test selection that answers `TARGETS` while `offering` is
+    /// set and refuses once it is cleared — what Mutter does with
+    /// `XdndSelection` while it holds a Wayland drag and after it lets go.
+    struct OfferingOwner {
+        offering: Arc<AtomicBool>,
+        stopped: Arc<AtomicBool>,
+        thread: Option<thread::JoinHandle<()>>,
+    }
+
+    impl OfferingOwner {
+        fn claim(name: &str, offering: bool) -> Option<Self> {
+            let (connection, _window) = claim_selection(name)?;
+            let targets = intern(&connection, "TARGETS")?;
+            let offering = Arc::new(AtomicBool::new(offering));
+            let stopped = Arc::new(AtomicBool::new(false));
+            let thread = {
+                let offering = offering.clone();
+                let stopped = stopped.clone();
+                thread::spawn(move || {
+                    serve_targets(&connection, targets, &offering, &stopped);
+                })
+            };
+            Some(Self {
+                offering,
+                stopped,
+                thread: Some(thread),
+            })
+        }
+
+        fn stop_offering(&self) {
+            self.offering.store(false, Ordering::Relaxed);
+        }
+    }
+
+    impl Drop for OfferingOwner {
+        fn drop(&mut self) {
+            self.stopped.store(true, Ordering::Relaxed);
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    fn serve_targets(
+        connection: &RustConnection,
+        targets: u32,
+        offering: &AtomicBool,
+        stopped: &AtomicBool,
+    ) {
+        while !stopped.load(Ordering::Relaxed) {
+            let Ok(event) = connection.poll_for_event() else {
+                return;
+            };
+            let Some(Event::SelectionRequest(request)) = event else {
+                thread::sleep(Duration::from_millis(5));
+                continue;
+            };
+            let property = if offering.load(Ordering::Relaxed) && request.target == targets {
+                let _ = connection.change_property32(
+                    PropMode::REPLACE,
+                    request.requestor,
+                    request.property,
+                    AtomEnum::ATOM,
+                    &[targets],
+                );
+                request.property
+            } else {
+                x11rb::NONE
+            };
+            let notify = SelectionNotifyEvent {
+                response_type: SELECTION_NOTIFY_EVENT,
+                sequence: 0,
+                time: request.time,
+                requestor: request.requestor,
+                selection: request.selection,
+                target: request.target,
+                property,
+            };
+            let _ = connection.send_event(false, request.requestor, EventMask::NO_EVENT, notify);
+            let _ = connection.flush();
+        }
+    }
+
+    /// Collect phases until `count` have arrived or the delivery timeout runs out.
+    fn receive_phases(
+        receiver: &async_channel::Receiver<DragPhase>,
+        count: usize,
+    ) -> Vec<DragPhase> {
+        let deadline = Instant::now() + DELIVERY_TIMEOUT;
+        let mut phases = Vec::new();
+        while Instant::now() < deadline && phases.len() < count {
+            match receiver.try_recv() {
+                Ok(phase) => phases.push(phase),
+                Err(_) => thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        phases
+    }
+
     /// Manual check: claim the real `XdndSelection` so a running Yeet reveals
     /// its shelf. Ignored so it never runs in CI.
     #[test]
@@ -331,8 +488,10 @@ mod tests {
     }
 
     /// The whole mechanism against a real X server: a new selection owner is
-    /// reported as a drag beginning, and — with no pointer button held, which
-    /// is the state of an unattended test machine — as ending straight after.
+    /// reported as a drag beginning, and an owner with nothing to offer — the
+    /// compositor once its drag is over — as ending straight after. No pointer
+    /// button is held on an unattended test machine, which is also how a drag
+    /// the Wayland compositor owns looks from XWayland.
     ///
     /// Skipped where there is no X server to ask. That covers a Wayland-only
     /// session, where this backend is unavailable in exactly the same way.
@@ -342,25 +501,45 @@ mod tests {
             return;
         }
         let (sender, receiver) = async_channel::unbounded();
-        let Some(_watch) = watch_selection(TEST_SELECTION, sender) else {
+        let Some(_watch) = watch_selection(BEGIN_END_SELECTION, sender) else {
             return;
         };
-        let Some((_connection, _window)) = claim_test_selection() else {
+        let Some(_owner) = OfferingOwner::claim(BEGIN_END_SELECTION, false) else {
             return;
         };
-
-        let deadline = Instant::now() + DELIVERY_TIMEOUT;
-        let mut phases = Vec::new();
-        while Instant::now() < deadline && phases.len() < 2 {
-            match receiver.try_recv() {
-                Ok(phase) => phases.push(phase),
-                Err(_) => thread::sleep(Duration::from_millis(20)),
-            }
-        }
         assert_eq!(
-            phases,
+            receive_phases(&receiver, 2),
             [DragPhase::Begin, DragPhase::End],
             "taking the selection should open and then close one drag"
+        );
+    }
+
+    /// A drag lasts for as long as its owner still offers it, however long the
+    /// pointer stays put: the pointer never moves on a test machine, just as
+    /// XWayland never sees it move during a drag the compositor owns.
+    #[test]
+    fn a_drag_lasts_while_its_owner_still_offers_it() {
+        if !available() {
+            return;
+        }
+        let (sender, receiver) = async_channel::unbounded();
+        let Some(_watch) = watch_selection(OFFERED_SELECTION, sender) else {
+            return;
+        };
+        let Some(owner) = OfferingOwner::claim(OFFERED_SELECTION, true) else {
+            return;
+        };
+        assert_eq!(receive_phases(&receiver, 1), [DragPhase::Begin]);
+        thread::sleep(Duration::from_secs(2));
+        assert!(
+            receiver.try_recv().is_err(),
+            "a drag that is still offered must not end"
+        );
+        owner.stop_offering();
+        assert_eq!(
+            receive_phases(&receiver, 1),
+            [DragPhase::End],
+            "the drag should end once the owner stops offering it"
         );
     }
 
@@ -373,11 +552,11 @@ mod tests {
             return;
         }
         let (sender, receiver) = async_channel::unbounded();
-        let Some(watch) = watch_selection(TEST_SELECTION, sender) else {
+        let Some(watch) = watch_selection(DROPPED_SELECTION, sender) else {
             return;
         };
         drop(watch);
-        let Some((_connection, _window)) = claim_test_selection() else {
+        let Some((_connection, _window)) = claim_selection(DROPPED_SELECTION) else {
             return;
         };
         thread::sleep(DRAG_POLL_INTERVAL * 4);
