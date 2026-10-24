@@ -14,4 +14,4 @@ path = "src/main.rs"
 flate2 = "1.1"
 sha2 = "0.10"
 tar = "0.4"
-zip = { version = "5.1", default-features = false, features = ["deflate"] }
+zip = { version = "9.0", default-features = false, features = ["deflate"] }

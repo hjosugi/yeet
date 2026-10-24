@@ -19,7 +19,7 @@ serde_json = "1.0"
 sha2 = "0.10"
 tar = "0.4"
 ureq = { version = "3.4", default-features = false, features = ["rustls", "json"] }
-zip = { version = "5.1", default-features = false, features = ["deflate"] }
+zip = { version = "9.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3.20"

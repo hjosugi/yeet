@@ -46,10 +46,14 @@ fn unpack_zip(archive: &Path, destination: &Path) -> Result<()> {
     let mut zip = zip::ZipArchive::new(file)?;
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index)?;
+        let name = entry.name()?;
+        if name.starts_with(['/', '\\']) || name.as_bytes().get(1) == Some(&b':') {
+            return Err(format!("archive entry {name} has an unsafe path").into());
+        }
         // `enclosed_name` is `None` for entries that try to escape the archive
         // root, which is exactly the case worth refusing.
         let Some(name) = entry.enclosed_name() else {
-            return Err(format!("archive entry {} has an unsafe path", entry.name()).into());
+            return Err(format!("archive entry {} has an unsafe path", entry.name()?).into());
         };
         let Some(relative) = strip_root(&name) else {
             continue;
@@ -68,7 +72,7 @@ fn unpack_zip(archive: &Path, destination: &Path) -> Result<()> {
         if let Some(mode) = entry.unix_mode() {
             use std::os::unix::fs::PermissionsExt;
 
-            fs::set_permissions(&target, fs::Permissions::from_mode(mode))?;
+            fs::set_permissions(&target, fs::Permissions::from_mode(mode & 0o777))?;
         }
     }
     Ok(())
@@ -109,6 +113,52 @@ fn safe_join(root: &Path, relative: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zip_extraction_rejects_absolute_names_before_library_normalization() {
+        use std::io::{Cursor, Write};
+
+        for name in ["/etc/yeet", "C:/Windows/yeet", "\\\\server\\share\\yeet"] {
+            let fixture = tempfile::tempdir().unwrap();
+            let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            writer
+                .start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"untrusted").unwrap();
+            let archive = fixture.path().join("absolute.zip");
+            fs::write(&archive, writer.finish().unwrap().into_inner()).unwrap();
+            assert!(unpack(&archive, Container::Zip, &fixture.path().join("out")).is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn zip_extraction_preserves_executable_bits_without_special_permissions() {
+        use std::io::{Cursor, Write};
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = tempfile::tempdir().unwrap();
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file("release/bin/yeet", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"executable payload").unwrap();
+        let mut bytes = writer.finish().unwrap().into_inner();
+        // Model an untrusted archive: the writer itself strips special bits.
+        let central = bytes.windows(4).position(|x| x == b"PK\x01\x02").unwrap();
+        bytes[central + 38..central + 42].copy_from_slice(&((0o106755_u32) << 16).to_le_bytes());
+        let archive = fixture.path().join("release.zip");
+        fs::write(&archive, bytes).unwrap();
+        let destination = fixture.path().join("out");
+        unpack(&archive, Container::Zip, &destination).unwrap();
+
+        let output = destination.join("bin/yeet");
+        assert_eq!(fs::read(&output).unwrap(), b"executable payload");
+        assert_eq!(
+            fs::metadata(output).unwrap().permissions().mode() & 0o7777,
+            0o755
+        );
+    }
 
     #[test]
     fn the_versioned_top_level_directory_is_removed() {
