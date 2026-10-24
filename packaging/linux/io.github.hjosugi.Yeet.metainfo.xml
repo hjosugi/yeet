@@ -32,6 +32,9 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.6" date="2026-10-24">
+      <description><p>Reviewed dependency security updates and archive handling fixes.</p></description>
+    </release>
     <release version="0.7.5" date="2026-10-04">
       <description>
         <p>Keeps the summoned shelf on screen for the whole of a Wayland-native

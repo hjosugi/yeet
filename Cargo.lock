@@ -2166,7 +2166,7 @@ checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
 
 [[package]]
 name = "xtask"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "flate2",
  "sha2",
@@ -2176,7 +2176,7 @@ dependencies = [
 
 [[package]]
 name = "yeet"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "ashpd",
  "async-channel",
@@ -2201,7 +2201,7 @@ dependencies = [
 
 [[package]]
 name = "yeetup"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "directories",
  "flate2",
